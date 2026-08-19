@@ -1,0 +1,25 @@
+# ModEngine runtime - downloaded tool + build output used to run/test mods,
+# not source. Rebuild/redownload as needed.
+/ModEngine-2.1.0.0-win64/
+
+# --- IDE / build noise (Visual Studio, CLion/CMake) ---
+.vs/
+.idea/
+x64/
+x86/
+cmake-build-*/
+*.obj
+*.pdb
+*.ilk
+*.pch
+*.tlog
+*.idb
+*.ipch
+*.log
+*.suo
+*.user
+
+# --- Editor/tool-generated backups (SmithBox / DSMapStudio / DSAnimStudio) ---
+*.bak
+*.prev
+*.dsasbak
