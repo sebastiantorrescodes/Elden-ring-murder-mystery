@@ -25,6 +25,8 @@ add_library(maincoopextension SHARED dllmain.cpp
         ModFunctions.h
         EventFlag.cpp
         EventFlag.cpp
+        TcpTestClient.cpp
+        TcpTestClient.h
 )
-target_link_libraries(maincoopextension ${CMAKE_CURRENT_SOURCE_DIR}/MinHook.x64.lib)
+target_link_libraries(maincoopextension ${CMAKE_CURRENT_SOURCE_DIR}/MinHook.x64.lib ws2_32)
 

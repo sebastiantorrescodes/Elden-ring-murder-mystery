@@ -111,7 +111,10 @@ PlayerCoords WorldChrMan::getCoordsForOtherPlayer(int playerSlot) {
     float x = *PointerChain::make<float>(WorldChrManIns, 0x10EF8, playerOffset, 0x190u, 0x68, 0x70);
     float y = *PointerChain::make<float>(WorldChrManIns, 0x10EF8, playerOffset, 0x190u, 0x68, 0x78);
     float z = *PointerChain::make<float>(WorldChrManIns, 0x10EF8, playerOffset, 0x190u, 0x68, 0x74);
-    return { x, y, z };
+    // Same array/slot walk as php/pmhp in the constructor, just with playerOffset instead of the local player's implicit 0.
+    int hp = *PointerChain::make<int>(WorldChrManIns, 0x10EF8, playerOffset, 0x190u, 0, 0x138);
+    int maxHp = *PointerChain::make<int>(WorldChrManIns, 0x10EF8, playerOffset, 0x190u, 0, 0x13C);
+    return { x, y, z, hp, maxHp };
 }
 
 
@@ -159,29 +162,47 @@ void WorldChrMan::debugPlayerCount() {
 }
 
 // Uses raw pointer walks (not PointerChain) wrapped in SEH so a bad/out-of-bounds
-// slot reports an error instead of crashing the whole game.
-void WorldChrMan::debugSlot(int playerSlot) {
+// slot returns false instead of crashing the whole game.
+bool WorldChrMan::tryReadSlot(int playerSlot, PlayerCoords& out) {
     __try {
         if (!WorldChrManIns) {
-            std::cout << "Slot " << playerSlot << ": WorldChrManIns is null" << std::endl;
-            return;
+            return false;
         }
         uintptr_t base = *(uintptr_t*)WorldChrManIns;
         base = *(uintptr_t*)(base + 0x10EF8);
         base = base + (0x10 * playerSlot);
         base = *(uintptr_t*)base;
         if (!base) {
-            std::cout << "Slot " << playerSlot << ": empty (null sub-pointer)" << std::endl;
-            return;
+            return false;
         }
-        base = *(uintptr_t*)(base + 0x190);
-        base = *(uintptr_t*)(base + 0x68);
-        float x = *(float*)(base + 0x70);
-        float y = *(float*)(base + 0x78);
-        float z = *(float*)(base + 0x74);
-        std::cout << "Slot " << playerSlot << " coords: x=" << x << " y=" << y << " z=" << z << std::endl;
+        uintptr_t chrBase = *(uintptr_t*)(base + 0x190);
+
+        uintptr_t coordBase = *(uintptr_t*)(chrBase + 0x68);
+        out.x = *(float*)(coordBase + 0x70);
+        out.y = *(float*)(coordBase + 0x78);
+        out.z = *(float*)(coordBase + 0x74);
+
+        // Same base as php/pmhp in the constructor, mirrored here since this probe bypasses PointerChain.
+        uintptr_t hpBase = *(uintptr_t*)(chrBase + 0);
+        out.hp = *(int*)(hpBase + 0x138);
+        out.maxHp = *(int*)(hpBase + 0x13C);
+        return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        std::cout << "Slot " << playerSlot << ": read crashed (access violation), likely out of bounds" << std::endl;
+        return false;
     }
+}
+
+void WorldChrMan::debugSlot(int playerSlot) {
+    if (!WorldChrManIns) {
+        std::cout << "Slot " << playerSlot << ": WorldChrManIns is null" << std::endl;
+        return;
+    }
+    PlayerCoords coords{};
+    if (!tryReadSlot(playerSlot, coords)) {
+        std::cout << "Slot " << playerSlot << ": empty or read crashed, likely out of bounds" << std::endl;
+        return;
+    }
+    std::cout << "Slot " << playerSlot << " coords: x=" << coords.x << " y=" << coords.y << " z=" << coords.z
+               << " hp=" << coords.hp << "/" << coords.maxHp << std::endl;
 }
 

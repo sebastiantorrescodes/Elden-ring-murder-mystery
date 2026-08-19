@@ -13,6 +13,8 @@ struct PlayerCoords {
     float x;
     float y;
     float z;
+    int hp;
+    int maxHp;
 };
 
 
@@ -63,5 +65,8 @@ public:
     static int getPlayerCount();
     static void debugPlayerCount();
     static void debugSlot(int playerSlot);
+    // Guarded raw pointer walk (SEH, not PointerChain) so an out-of-bounds/empty
+    // slot returns false instead of crashing. Shared by debugSlot and the TCP poll loop.
+    static bool tryReadSlot(int playerSlot, PlayerCoords& out);
 };
 #endif // _WORLD_CHR_MAN_H_

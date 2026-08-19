@@ -8,10 +8,16 @@
 #include <iostream>
 #include <fstream>
 #include "ModFunctions.h"
+#include "TcpTestClient.h"
+#include <sstream>
 
 using namespace ModUtils;
 
 std::unique_ptr<GameFunctions> gameFunctions = nullptr;
+
+// How many player slots to probe each poll cycle when broadcasting to the TCP test listener.
+constexpr int kTcpPollSlotCount = 4;
+constexpr unsigned long long kTcpPollIntervalMs = 250;
 
 DWORD WINAPI MainThread(LPVOID lpParam)
 {
@@ -34,10 +40,14 @@ DWORD WINAPI MainThread(LPVOID lpParam)
     std::cout << "f5- enable/disable player respawn" << std::endl;
     std::cout << "f4- kill player(set hp to 0)" << std::endl;
     std::cout << "numpad3- print coords for all players in session" << std::endl;
+    std::cout << "background- polls slots 0-3 every " << kTcpPollIntervalMs << "ms and streams coords+hp to 127.0.0.1:9191 (tcp-test-listener.js)" << std::endl;
 
     gameFunctions = GameFunctions::Make();
     WorldChrMan mainBase = WorldChrMan::Make();
     bool noDead = false;
+
+    TcpTestClient tcpTestClient("127.0.0.1", 9191);
+    unsigned long long nextTcpPollMs = 0;
 
 	while (true) {
 		if (GetAsyncKeyState(VK_F11) & 1) {
@@ -81,7 +91,8 @@ DWORD WINAPI MainThread(LPVOID lpParam)
                 std::cout << "Player count: " << playerCount << std::endl;
                 for (int i = 0; i < playerCount; i++) {
                     PlayerCoords coords = freshBase.getCoordsForOtherPlayer(i);
-                    std::cout << "Player slot " << i << " coords: x=" << coords.x << " y=" << coords.y << " z=" << coords.z << std::endl;
+                    std::cout << "Player slot " << i << " coords: x=" << coords.x << " y=" << coords.y << " z=" << coords.z
+                               << " hp=" << coords.hp << "/" << coords.maxHp << std::endl;
                 }
                 std::cout << "-- safe probe of slots 1-3 regardless of reported count --" << std::endl;
                 WorldChrMan::debugSlot(1);
@@ -99,6 +110,20 @@ DWORD WINAPI MainThread(LPVOID lpParam)
                 std::cout << "WorldChrManIns unloaded, turning off nodead" << std::endl;
                 noDead = false;
                 std::cout << "NoDead status: " << noDead << std::endl;
+            }
+        }
+
+        unsigned long long nowMs = GetTickCount64();
+        if (nowMs >= nextTcpPollMs) {
+            nextTcpPollMs = nowMs + kTcpPollIntervalMs;
+            for (int slot = 0; slot < kTcpPollSlotCount; slot++) {
+                PlayerCoords coords{};
+                if (WorldChrMan::tryReadSlot(slot, coords)) {
+                    std::ostringstream line;
+                    line << "slot=" << slot << " x=" << coords.x << " y=" << coords.y << " z=" << coords.z
+                         << " hp=" << coords.hp << " maxHp=" << coords.maxHp;
+                    tcpTestClient.sendLine(line.str());
+                }
             }
         }
 	}
