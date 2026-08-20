@@ -7,6 +7,58 @@ body {
   padding: 2rem;
 }
 
+#controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+#status {
+  color: #666;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+#peer-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 0.85rem;
+}
+
+.peer-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.meter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 0.85rem;
+}
+
+.meter {
+  width: 140px;
+  height: 10px;
+  background: #ddd;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  width: 0%;
+  background: #2ecc71;
+  transition: width 60ms linear;
+}
+
 #dll-log {
   height: 20rem;
   overflow-y: auto;

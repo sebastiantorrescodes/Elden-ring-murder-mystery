@@ -1,0 +1,6 @@
+# Replace with your actual domain/subdomain (e.g. a DuckDNS one). Caddy handles
+# Let's Encrypt provisioning and renewal automatically for whatever's listed here -
+# no separate certbot step needed.
+your-subdomain.duckdns.org {
+    reverse_proxy 127.0.0.1:8080
+}

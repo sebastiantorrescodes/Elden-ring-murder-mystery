@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, session } from 'electron';
 import path from 'node:path';
 import net from 'node:net';
 import started from 'electron-squirrel-startup';
@@ -7,6 +7,14 @@ import started from 'electron-squirrel-startup';
 if (started) {
   app.quit();
 }
+
+// Local multi-window testing (two mics, two distances) means multiple instances of
+// this same app run at once. They'd otherwise all default to the same Chromium
+// userData/GPU-cache directory and collide on it (Windows: "Access is denied" trying
+// to write a cache file another process has locked). Give each process its own,
+// keyed by PID, under the OS temp dir so nothing persists between runs.
+// Must happen before app is ready - app.setPath has no effect after that.
+app.setPath('userData', path.join(app.getPath('temp'), 'elden-ring-prox-chat', `pid-${process.pid}`));
 
 // Same host/port and newline-delimited text protocol as quick-tcp-tester/tcp-test-listener.js.
 // The DLL is the TCP client here - it connects out to us and streams one reading per line.
@@ -72,7 +80,17 @@ const startDllServer = () => {
     });
   });
 
-  server.on('error', (err) => {
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      // Expected when running multiple instances for local multi-mic testing - only one
+      // window can own this port. Not fatal: this window just won't get live DLL data,
+      // use the manual position controls in the UI instead.
+      console.log(
+        `[dll] port ${DLL_TCP_PORT} is already owned by another window - this window ` +
+          'will not receive live DLL data. Use the manual position controls instead.',
+      );
+      return;
+    }
     console.error('[dll] server error', err.message);
   });
 
@@ -87,6 +105,12 @@ const startDllServer = () => {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.on('ready', () => {
+  // The renderer needs mic access for WebRTC; explicitly scope the grant to
+  // 'media' rather than relying on Electron's default handler for everything.
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(permission === 'media');
+  });
+
   createWindow();
   startDllServer();
 });

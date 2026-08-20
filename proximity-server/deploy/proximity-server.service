@@ -1,0 +1,30 @@
+[Unit]
+Description=Elden Ring Prox Chat - proximity signaling server
+After=network.target
+
+[Service]
+Type=simple
+User=proxchat
+Group=proxchat
+WorkingDirectory=/opt/proximity-server
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=3
+
+# Node listens on 127.0.0.1 only - Caddy (see Caddyfile) is what's actually
+# exposed to the internet, terminating TLS and reverse-proxying to this port.
+Environment=PORT=8080
+# Required in production: without it, anyone who guesses a room name can join.
+# Generate one with: openssl rand -hex 24
+Environment=ROOM_SECRET=changeme
+
+# Minimal sandboxing - this process only needs to read its own code and talk
+# to the network, nothing else on the box.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/proximity-server
+
+[Install]
+WantedBy=multi-user.target

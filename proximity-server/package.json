@@ -1,0 +1,14 @@
+{
+  "name": "proximity-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WebSocket signaling server: relays player positions and WebRTC signaling, computes proximity-based mic volume server-side.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "mock": "node mock-client.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

@@ -7,6 +7,33 @@
   </head>
   <body>
     <h1>Elden Ring Prox Chat</h1>
+
+    <div id="controls">
+      <input id="server-url" type="text" placeholder="server url" value="ws://localhost:8080" />
+      <input id="room-secret" type="password" placeholder="room secret (if required)" />
+      <input id="player-id" type="text" placeholder="player id" />
+      <input id="room-id" type="text" placeholder="room" value="test-room" />
+      <select id="mic-select"></select>
+      <button id="connect-btn">Connect</button>
+      <label><input id="mute-toggle" type="checkbox" /> Mute mic</label>
+    </div>
+    <div id="status">disconnected</div>
+
+    <div class="meter-row">
+      <span>My mic:</span>
+      <div class="meter"><div id="local-meter-fill" class="meter-fill"></div></div>
+    </div>
+
+    <ul id="peer-list"></ul>
+
+    <div id="manual-position">
+      <span>Manual position (for testing without the game/DLL):</span>
+      <label>x <input id="manual-x" type="number" value="0" step="1" /></label>
+      <label>y <input id="manual-y" type="number" value="0" step="1" /></label>
+      <label>z <input id="manual-z" type="number" value="0" step="1" /></label>
+      <button id="send-position-btn">Send position</button>
+    </div>
+
     <p>Waiting for DLL readings on 127.0.0.1:9191&hellip;</p>
     <pre id="dll-log"></pre>
     <script type="module" src="/src/renderer.ts"></script>
