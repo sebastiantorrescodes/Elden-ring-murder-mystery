@@ -11,7 +11,14 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { parseDllLine, LOCAL_PLAYER_SLOT } from './dll-protocol';
+import {
+  parseDllLine,
+  parseAreaLine,
+  parseCameraLine,
+  LOCAL_PLAYER_SLOT,
+  type DllAreaReading,
+  type DllCameraReading,
+} from './dll-protocol';
 import { SignalingClient } from './signaling-client';
 import { WebRtcMesh, type SignalPayload } from './webrtc-mesh';
 
@@ -49,6 +56,10 @@ export default function App() {
   const localStreamRef = useRef<MediaStream | null>(null);
   const isConnectingRef = useRef(false);
   const peerGainsRef = useRef(new Map<string, number>());
+  // area/camera lines arrive separately from slot= lines (once per poll cycle, not per
+  // slot) - remember the latest of each so they can be attached to the next position send.
+  const lastAreaRef = useRef<DllAreaReading | null>(null);
+  const lastCameraRef = useRef<DllCameraReading | null>(null);
 
   const logRef = useRef<HTMLDivElement | null>(null);
   const localMeterRef = useRef<HTMLDivElement | null>(null);
@@ -170,9 +181,10 @@ export default function App() {
         syncPeerRows();
       },
       onVolumes: (volumes) => {
-        for (const [peerId, gain] of Object.entries(volumes)) {
-          meshRef.current?.setGain(peerId, gain);
-          peerGainsRef.current.set(peerId, gain);
+        for (const [peerId, v] of Object.entries(volumes)) {
+          meshRef.current?.setGain(peerId, v.gain);
+          meshRef.current?.setDirection(peerId, v.relX, v.relY, v.relZ);
+          peerGainsRef.current.set(peerId, v.gain);
         }
         syncPeerRows();
       },
@@ -228,9 +240,29 @@ export default function App() {
       setDllStatus('Receiving live DLL data:');
       appendLog(line);
 
+      const area = parseAreaLine(line);
+      if (area) {
+        lastAreaRef.current = area;
+        return;
+      }
+
+      const camera = parseCameraLine(line);
+      if (camera) {
+        lastCameraRef.current = camera;
+        return;
+      }
+
       const reading = parseDllLine(line);
       if (reading && reading.slot === LOCAL_PLAYER_SLOT && signalingRef.current) {
-        signalingRef.current.sendPosition(reading.x, reading.y, reading.z);
+        signalingRef.current.sendPosition(
+          reading.x,
+          reading.y,
+          reading.z,
+          lastAreaRef.current?.mapId,
+          lastAreaRef.current?.underground,
+          lastCameraRef.current?.yawCos,
+          lastCameraRef.current?.yawSin,
+        );
       }
     });
     return () => {

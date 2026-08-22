@@ -9,6 +9,7 @@
 #include <fstream>
 #include "ModFunctions.h"
 #include "TcpTestClient.h"
+#include "GameVersion.h"
 #include <sstream>
 
 using namespace ModUtils;
@@ -16,8 +17,13 @@ using namespace ModUtils;
 std::unique_ptr<GameFunctions> gameFunctions = nullptr;
 
 // How many player slots to probe each poll cycle when broadcasting to the TCP test listener.
+// Currently unused by the poll loop below (only the local slot is sent - see the
+// commented-out multi-slot loop), kept for when/if that's re-enabled.
 constexpr int kTcpPollSlotCount = 4;
 constexpr unsigned long long kTcpPollIntervalMs = 250;
+// Matches dll-protocol.ts's LOCAL_PLAYER_SLOT - slot 0 is structurally always the
+// local player in the per-player array, never another peer.
+constexpr int kLocalPlayerSlot = 0;
 
 DWORD WINAPI MainThread(LPVOID lpParam)
 {
@@ -42,7 +48,15 @@ DWORD WINAPI MainThread(LPVOID lpParam)
     std::cout << "f5- enable/disable player respawn" << std::endl;
     std::cout << "f4- kill player(set hp to 0)" << std::endl;
     std::cout << "numpad3- print coords for all players in session" << std::endl;
-    std::cout << "background- polls slots 0-3 every " << kTcpPollIntervalMs << "ms and streams coords+hp to 127.0.0.1:9191 (tcp-test-listener.js)" << std::endl;
+    std::cout << "background- polls this client's own (local player) slot every " << kTcpPollIntervalMs << "ms and streams coords+hp+area to 127.0.0.1:9191 (tcp-test-listener.js)" << std::endl;
+
+    uint64_t gameVersion = GetGameVersion();
+    std::cout << "Game version: "
+               << ((gameVersion >> 48) & 0xFFFF) << "."
+               << ((gameVersion >> 32) & 0xFFFF) << "."
+               << ((gameVersion >> 16) & 0xFFFF) << "."
+               << (gameVersion & 0xFFFF)
+               << " (raw: 0x" << std::hex << gameVersion << std::dec << ")" << std::endl;
 
     gameFunctions = GameFunctions::Make();
     WorldChrMan mainBase = WorldChrMan::Make();
@@ -86,6 +100,8 @@ DWORD WINAPI MainThread(LPVOID lpParam)
             std::cout << "mainBase(startup) addr: " << std::hex << mainBase.GetAddress()
                        << ", freshBase(rescanned) addr: " << freshBase.GetAddress() << std::dec << std::endl;
             WorldChrMan::debugPlayerCount();
+            WorldChrMan::debugLocation();
+            WorldChrMan::debugCamera();
             if (!freshBase.isLoaded()) {
                 std::cout << "WorldChrMan not loaded, cannot read player coords" << std::endl;
             } else {
@@ -118,6 +134,14 @@ DWORD WINAPI MainThread(LPVOID lpParam)
         unsigned long long nowMs = GetTickCount64();
         if (nowMs >= nextTcpPollMs) {
             nextTcpPollMs = nowMs + kTcpPollIntervalMs;
+
+            // Only this client's own (local player) slot is sent - each participant
+            // runs their own DLL+app instance and self-reports just their own state;
+            // nothing downstream (App.tsx filters to LOCAL_PLAYER_SLOT) ever consumed
+            // the other slots anyway. Left commented rather than deleted in case a
+            // future host-authoritative feature (e.g. murder mystery gamemode logic)
+            // wants everyone's data from one client's perspective again.
+            /*
             for (int slot = 0; slot < kTcpPollSlotCount; slot++) {
                 PlayerCoords coords{};
                 if (WorldChrMan::tryReadSlot(slot, coords)) {
@@ -126,6 +150,33 @@ DWORD WINAPI MainThread(LPVOID lpParam)
                          << " hp=" << coords.hp << " maxHp=" << coords.maxHp;
                     tcpTestClient.sendLine(line.str());
                 }
+            }
+            */
+            PlayerCoords coords{};
+            if (WorldChrMan::tryReadSlot(kLocalPlayerSlot, coords)) {
+                std::ostringstream line;
+                line << "slot=" << kLocalPlayerSlot << " x=" << coords.x << " y=" << coords.y << " z=" << coords.z
+                     << " hp=" << coords.hp << " maxHp=" << coords.maxHp;
+                tcpTestClient.sendLine(line.str());
+            }
+
+            // This client's own current map/area - not per-slot data (see Location
+            // comment in WorldChrMan.h), so it's sent as its own line once per poll
+            // cycle rather than repeated on every slot= line above.
+            Location loc{};
+            if (WorldChrMan::tryReadLocation(loc)) {
+                std::ostringstream areaLine;
+                areaLine << "area mapId=" << loc.mapId << " underground=" << loc.underground;
+                tcpTestClient.sendLine(areaLine.str());
+            }
+
+            // This client's own current camera facing - same "local client only, not
+            // per-slot" reasoning as the area line above.
+            Camera cam{};
+            if (WorldChrMan::tryReadCamera(cam)) {
+                std::ostringstream cameraLine;
+                cameraLine << "camera yawCos=" << cam.yawCos << " yawSin=" << cam.yawSin;
+                tcpTestClient.sendLine(cameraLine.str());
             }
         }
 	}

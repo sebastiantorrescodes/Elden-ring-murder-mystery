@@ -1,0 +1,448 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1,
+						8,
+						12
+					],
+					"jsonFile" : "directory-.-Debug-d0094a50bb2071803777.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.13"
+					},
+					"projectIndex" : 0,
+					"source" : "."
+				},
+				{
+					"build" : "deps",
+					"childIndexes" : 
+					[
+						2,
+						3,
+						4,
+						5,
+						6,
+						7
+					],
+					"jsonFile" : "directory-deps-Debug-daa91dd17ee23792cad4.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.13"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "deps"
+				},
+				{
+					"build" : "deps/imgui",
+					"jsonFile" : "directory-deps.imgui-Debug-7a2142d65f471e6161b9.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.13"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 1,
+					"source" : "deps/imgui",
+					"targetIndexes" : 
+					[
+						4,
+						5
+					]
+				},
+				{
+					"build" : "deps/minhook",
+					"jsonFile" : "directory-deps.minhook-Debug-8b73d0ca3528cde4cd46.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.13"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 2,
+					"source" : "deps/minhook",
+					"targetIndexes" : 
+					[
+						7
+					]
+				},
+				{
+					"build" : "deps/nlohmann_json",
+					"jsonFile" : "directory-deps.nlohmann_json-Debug-19a3dcbfd255fce66600.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.13"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 3,
+					"source" : "deps/nlohmann_json"
+				},
+				{
+					"build" : "deps/pattern16",
+					"jsonFile" : "directory-deps.pattern16-Debug-11e1ba50a4864807e775.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.13"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 4,
+					"source" : "deps/pattern16"
+				},
+				{
+					"build" : "deps/fmt",
+					"jsonFile" : "directory-deps.fmt-Debug-d18fc91b01ebc04994fc.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.8"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 5,
+					"source" : "deps/fmt",
+					"targetIndexes" : 
+					[
+						3
+					]
+				},
+				{
+					"build" : "deps/steamworks",
+					"jsonFile" : "directory-deps.steamworks-Debug-dca0c526f840932d4d20.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.13"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 6,
+					"source" : "deps/steamworks",
+					"targetIndexes" : 
+					[
+						9
+					]
+				},
+				{
+					"build" : "src",
+					"childIndexes" : 
+					[
+						9,
+						10,
+						11
+					],
+					"jsonFile" : "directory-src-Debug-c94b7c2814d5a21df52c.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.13"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 7,
+					"source" : "src",
+					"targetIndexes" : 
+					[
+						0
+					]
+				},
+				{
+					"build" : "src/boss",
+					"jsonFile" : "directory-src.boss-Debug-80583938df64d3d508b8.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.13"
+					},
+					"parentIndex" : 8,
+					"projectIndex" : 8,
+					"source" : "src/boss",
+					"targetIndexes" : 
+					[
+						2
+					]
+				},
+				{
+					"build" : "src/achievements",
+					"jsonFile" : "directory-src.achievements-Debug-55117ade05aa44f89f2b.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.13"
+					},
+					"parentIndex" : 8,
+					"projectIndex" : 9,
+					"source" : "src/achievements",
+					"targetIndexes" : 
+					[
+						1
+					]
+				},
+				{
+					"build" : "src/minimap",
+					"jsonFile" : "directory-src.minimap-Debug-14966930c1ff3e2072c9.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.13"
+					},
+					"parentIndex" : 8,
+					"projectIndex" : 10,
+					"source" : "src/minimap",
+					"targetIndexes" : 
+					[
+						8
+					]
+				},
+				{
+					"build" : "injector",
+					"jsonFile" : "directory-injector-Debug-7eef353f848b7854b156.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.13"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 11,
+					"source" : "injector",
+					"targetIndexes" : 
+					[
+						6
+					]
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"childIndexes" : 
+					[
+						1,
+						2,
+						3,
+						4,
+						5,
+						6,
+						7,
+						11
+					],
+					"directoryIndexes" : 
+					[
+						0,
+						1
+					],
+					"name" : "EROverlay"
+				},
+				{
+					"directoryIndexes" : 
+					[
+						2
+					],
+					"name" : "imgui_dx12",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						4,
+						5
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						3
+					],
+					"name" : "minhook64",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						7
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						4
+					],
+					"name" : "nlohmann_json",
+					"parentIndex" : 0
+				},
+				{
+					"directoryIndexes" : 
+					[
+						5
+					],
+					"name" : "Pattern16",
+					"parentIndex" : 0
+				},
+				{
+					"directoryIndexes" : 
+					[
+						6
+					],
+					"name" : "FMT",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						3
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						7
+					],
+					"name" : "steam_api64",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						9
+					]
+				},
+				{
+					"childIndexes" : 
+					[
+						8,
+						9,
+						10
+					],
+					"directoryIndexes" : 
+					[
+						8
+					],
+					"name" : "EROverlayDLL",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						0
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						9
+					],
+					"name" : "boss",
+					"parentIndex" : 7,
+					"targetIndexes" : 
+					[
+						2
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						10
+					],
+					"name" : "achievements",
+					"parentIndex" : 7,
+					"targetIndexes" : 
+					[
+						1
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						11
+					],
+					"name" : "minimap",
+					"parentIndex" : 7,
+					"targetIndexes" : 
+					[
+						8
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						12
+					],
+					"name" : "injector",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						6
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 8,
+					"id" : "EROverlayDLL::@145eef247bfb46b6828c",
+					"jsonFile" : "target-EROverlayDLL-Debug-a2d6f5516ffadfd41044.json",
+					"name" : "EROverlayDLL",
+					"projectIndex" : 7
+				},
+				{
+					"directoryIndex" : 10,
+					"id" : "achievements::@8f02b08de4b628b31ca7",
+					"jsonFile" : "target-achievements-Debug-f06d164e4951087b6f31.json",
+					"name" : "achievements",
+					"projectIndex" : 9
+				},
+				{
+					"directoryIndex" : 9,
+					"id" : "boss::@0a2bebaeb75c4abedbf1",
+					"jsonFile" : "target-boss-Debug-ada1f9f7ed8749cf8a9a.json",
+					"name" : "boss",
+					"projectIndex" : 8
+				},
+				{
+					"directoryIndex" : 6,
+					"id" : "fmt::@c1a9231e0206e99398e7",
+					"jsonFile" : "target-fmt-Debug-44f103317d2b1645b62d.json",
+					"name" : "fmt",
+					"projectIndex" : 5
+				},
+				{
+					"directoryIndex" : 2,
+					"id" : "imgui::@05b0070aad91a1f6801c",
+					"jsonFile" : "target-imgui-Debug-cd853e73c8ba9e32341b.json",
+					"name" : "imgui",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 2,
+					"id" : "imgui_dx12_backend::@05b0070aad91a1f6801c",
+					"jsonFile" : "target-imgui_dx12_backend-Debug-ace78964da10548bba4d.json",
+					"name" : "imgui_dx12_backend",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 12,
+					"id" : "injector::@29aa6a26553794152991",
+					"jsonFile" : "target-injector-Debug-677a04e772940a0df11e.json",
+					"name" : "injector",
+					"projectIndex" : 11
+				},
+				{
+					"directoryIndex" : 3,
+					"id" : "minhook::@f21f64af8c7d191f17cf",
+					"jsonFile" : "target-minhook-Debug-d3018f335ec9fda66447.json",
+					"name" : "minhook",
+					"projectIndex" : 2
+				},
+				{
+					"directoryIndex" : 11,
+					"id" : "minimap::@9a41f44ff057e19ffa44",
+					"jsonFile" : "target-minimap-Debug-b51efbd6d5c72612ccf2.json",
+					"name" : "minimap",
+					"projectIndex" : 10
+				},
+				{
+					"directoryIndex" : 7,
+					"id" : "steam_api64::@fe94f0aee02ef0d7f70c",
+					"jsonFile" : "target-steam_api64-Debug-25b65e594fc3ff682995.json",
+					"name" : "steam_api64",
+					"projectIndex" : 6
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "C:/Users/Dominic/Downloads/EROverlay-master/out/build/x64-Debug",
+		"source" : "C:/Users/Dominic/Downloads/EROverlay-master"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 7
+	}
+}

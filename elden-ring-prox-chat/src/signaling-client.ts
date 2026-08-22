@@ -15,9 +15,18 @@ interface PeerLeftMessage {
   type: 'peer-left';
   id: PeerId;
 }
+// relX/Y/Z are the peer's position already rotated into the listener's own facing
+// frame server-side (see proximity.js's computeRelativeOffset) - feed straight into
+// a PannerNode's position, no further rotation needed on this end.
+export interface PeerVolume {
+  gain: number;
+  relX: number;
+  relY: number;
+  relZ: number;
+}
 interface VolumesMessage {
   type: 'volumes';
-  volumes: Record<PeerId, number>;
+  volumes: Record<PeerId, PeerVolume>;
 }
 interface SignalMessage {
   type: 'signal';
@@ -42,7 +51,7 @@ export interface SignalingClientOptions {
   onWelcome?: (msg: WelcomeMessage) => void;
   onPeerJoined?: (id: PeerId) => void;
   onPeerLeft?: (id: PeerId) => void;
-  onVolumes?: (volumes: Record<PeerId, number>) => void;
+  onVolumes?: (volumes: Record<PeerId, PeerVolume>) => void;
   onSignal?: (from: PeerId, data: unknown) => void;
 }
 
@@ -97,8 +106,19 @@ export class SignalingClient {
     }
   }
 
-  sendPosition(x: number, y: number, z: number) {
-    this.send({ type: 'position', x, y, z });
+  // mapId/underground/yawCos/yawSin are all optional: an older client or the manual test
+  // controls that omit them are treated by the server as "unknown" rather than being
+  // penalized (area: treated as same area/trust distance; facing: no directional cue).
+  sendPosition(
+    x: number,
+    y: number,
+    z: number,
+    mapId?: number,
+    underground?: number,
+    yawCos?: number,
+    yawSin?: number,
+  ) {
+    this.send({ type: 'position', x, y, z, mapId, underground, yawCos, yawSin });
   }
 
   sendSignal(to: PeerId, data: unknown) {

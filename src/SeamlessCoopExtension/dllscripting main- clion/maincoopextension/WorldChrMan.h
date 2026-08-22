@@ -17,14 +17,41 @@ struct PlayerCoords {
     int maxHp;
 };
 
+// Local client's own current map/area, via CsMenuManImp - NOT per-player-slot data.
+// Two players can only be meaningfully compared by raw ChrIns coords (PlayerCoords)
+// when their mapId/underground both match; otherwise they're in different map
+// instances (e.g. one in a legacy dungeon/catacomb/DLC realm) and raw coordinate
+// distance between them is meaningless. Same layout as EROverlay's Location struct.
+struct Location {
+    int32_t mapId;
+    float x;
+    float y;
+    int32_t underground;
+    float oriDeg;
+};
+
+// This client's own current camera facing direction, via FieldArea - same "local
+// client only, not per-player-slot" caveat as Location. yawCos/yawSin together give
+// a 2D facing angle; which world axis "yaw=0" points along is not yet verified
+// in-game (ported from EROverlay, same as the other signatures here) - treat the
+// exact axis/sign mapping as unconfirmed until checked against real movement.
+struct Camera {
+    float yawCos;
+    int32_t dummy0;
+    float yawSin;
+    int32_t dummy1;
+};
+
 
 using PlayerHpPointer = decltype(PointerChain::make<int>(uintptr_t(), 0x10EF8, 0, 0x190u, 0, 0x138));
 using PlayerMaxHpPointer = decltype(PointerChain::make<int>(uintptr_t(), 0x10EF8, 0, 0x190u, 0, 0x13C));
 using PlayerIdleAnimation = decltype(PointerChain::make<int>(uintptr_t(), 0x10EF8, 0, 0x190u, 0x58, 0x18));
 using PlayerCurrentAnimation = decltype(PointerChain::make<int>(uintptr_t(), 0x10EF8, 0, 0x190u, 0x58, 0x20));
+// Offsets +0x74/+0x78 match EROverlay's convention (x/y/z verified against its
+// live NPC-radar distance math): +0x74 is height (Y, "up"), +0x78 is depth (Z).
 using PlayerLocalXCoord = decltype(PointerChain::make<float>(uintptr_t(), 0x10EF8, 0, 0x190u, 0x68, 0x70));
-using PlayerLocalYCoord = decltype(PointerChain::make<float>(uintptr_t(), 0x10EF8, 0, 0x190u, 0x68, 0x78));
-using PlayerLocalZCoord = decltype(PointerChain::make<float>(uintptr_t(), 0x10EF8, 0, 0x190u, 0x68, 0x74));
+using PlayerLocalYCoord = decltype(PointerChain::make<float>(uintptr_t(), 0x10EF8, 0, 0x190u, 0x68, 0x74));
+using PlayerLocalZCoord = decltype(PointerChain::make<float>(uintptr_t(), 0x10EF8, 0, 0x190u, 0x68, 0x78));
 
 class Address {
 protected:
@@ -68,5 +95,15 @@ public:
     // Guarded raw pointer walk (SEH, not PointerChain) so an out-of-bounds/empty
     // slot returns false instead of crashing. Shared by debugSlot and the TCP poll loop.
     static bool tryReadSlot(int playerSlot, PlayerCoords& out);
+
+    // Local client's own current map/area (see Location comment above), resolved via
+    // CsMenuManImp - a separate global pointer chain from WorldChrMan/GameMan.
+    static bool tryReadLocation(Location& out);
+    static void debugLocation();
+
+    // Local client's own current camera facing (see Camera comment above), resolved
+    // via FieldArea - another separate global pointer chain.
+    static bool tryReadCamera(Camera& out);
+    static void debugCamera();
 };
 #endif // _WORLD_CHR_MAN_H_

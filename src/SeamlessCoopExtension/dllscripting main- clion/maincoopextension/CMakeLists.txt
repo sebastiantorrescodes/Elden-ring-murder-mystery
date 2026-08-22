@@ -9,6 +9,8 @@ add_library(maincoopextension SHARED dllmain.cpp
         framework.h
         GameFunctions.cpp
         GameFunctions.h
+        GameVersion.cpp
+        GameVersion.h
         ini.h
         MinHook.h
         ModUtils.h
@@ -28,5 +30,5 @@ add_library(maincoopextension SHARED dllmain.cpp
         TcpTestClient.cpp
         TcpTestClient.h
 )
-target_link_libraries(maincoopextension ${CMAKE_CURRENT_SOURCE_DIR}/MinHook.x64.lib ws2_32)
+target_link_libraries(maincoopextension ${CMAKE_CURRENT_SOURCE_DIR}/MinHook.x64.lib ws2_32 version)
 

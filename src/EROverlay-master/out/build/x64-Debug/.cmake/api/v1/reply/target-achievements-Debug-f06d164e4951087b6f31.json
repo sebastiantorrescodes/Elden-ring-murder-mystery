@@ -1,0 +1,291 @@
+{
+	"artifacts" : 
+	[
+		{
+			"path" : "bin/overlays/Achievements.dll"
+		},
+		{
+			"path" : "lib/overlays/Achievements.lib"
+		},
+		{
+			"path" : "bin/overlays/Achievements.pdb"
+		}
+	],
+	"backtrace" : 2,
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"add_library",
+			"add_project",
+			"target_link_libraries",
+			"add_compile_options",
+			"fix_compile_flags"
+		],
+		"files" : 
+		[
+			"cmake/ProjectMacros.cmake",
+			"src/achievements/CMakeLists.txt",
+			"src/CMakeLists.txt",
+			"deps/steamworks/CMakeLists.txt",
+			"cmake/CustomCompilerOptions.cmake",
+			"CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 1
+			},
+			{
+				"command" : 1,
+				"file" : 1,
+				"line" : 1,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 26,
+				"parent" : 1
+			},
+			{
+				"command" : 2,
+				"file" : 1,
+				"line" : 13,
+				"parent" : 0
+			},
+			{
+				"file" : 2
+			},
+			{
+				"command" : 2,
+				"file" : 2,
+				"line" : 51,
+				"parent" : 4
+			},
+			{
+				"file" : 3
+			},
+			{
+				"command" : 2,
+				"file" : 3,
+				"line" : 7,
+				"parent" : 6
+			},
+			{
+				"file" : 5
+			},
+			{
+				"command" : 4,
+				"file" : 5,
+				"line" : 7,
+				"parent" : 8
+			},
+			{
+				"command" : 3,
+				"file" : 4,
+				"line" : 2,
+				"parent" : 9
+			}
+		]
+	},
+	"compileGroups" : 
+	[
+		{
+			"compileCommandFragments" : 
+			[
+				{
+					"fragment" : "/DWIN32 /D_WINDOWS /W3 /GR /EHsc /MDd /Zi /Ob0 /Od /RTC1 -std:c++latest"
+				},
+				{
+					"backtrace" : 10,
+					"fragment" : "/utf-8"
+				}
+			],
+			"defines" : 
+			[
+				{
+					"backtrace" : 3,
+					"define" : "_CRT_SECURE_NO_WARNINGS"
+				},
+				{
+					"define" : "achievements_EXPORTS"
+				}
+			],
+			"includes" : 
+			[
+				{
+					"backtrace" : 3,
+					"path" : "C:/Users/Dominic/Downloads/EROverlay-master/src/."
+				},
+				{
+					"backtrace" : 3,
+					"path" : "C:/Users/Dominic/Downloads/EROverlay-master/deps/imgui"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "C:/Users/Dominic/Downloads/EROverlay-master/deps/fmt/include"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "C:/Users/Dominic/Downloads/EROverlay-master/deps/nlohmann_json/include"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "C:/Users/Dominic/Downloads/EROverlay-master/deps/minhook"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "C:/Users/Dominic/Downloads/EROverlay-master/deps/steamworks/include"
+				}
+			],
+			"language" : "CXX",
+			"languageStandard" : 
+			{
+				"backtraces" : 
+				[
+					3
+				],
+				"standard" : "23"
+			},
+			"sourceIndexes" : 
+			[
+				0,
+				1,
+				3
+			]
+		}
+	],
+	"dependencies" : 
+	[
+		{
+			"backtrace" : 3,
+			"id" : "imgui::@05b0070aad91a1f6801c"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "minhook::@f21f64af8c7d191f17cf"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "steam_api64::@fe94f0aee02ef0d7f70c"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "fmt::@c1a9231e0206e99398e7"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "EROverlayDLL::@145eef247bfb46b6828c"
+		}
+	],
+	"folder" : 
+	{
+		"name" : "overlays"
+	},
+	"id" : "achievements::@8f02b08de4b628b31ca7",
+	"link" : 
+	{
+		"commandFragments" : 
+		[
+			{
+				"fragment" : "/machine:x64 /debug /INCREMENTAL",
+				"role" : "flags"
+			},
+			{
+				"backtrace" : 3,
+				"fragment" : "-LIBPATH:C:\\Users\\Dominic\\Downloads\\EROverlay-master\\deps\\steamworks\\lib",
+				"role" : "libraryPath"
+			},
+			{
+				"backtrace" : 3,
+				"fragment" : "lib\\EROverlay.lib",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 3,
+				"fragment" : "deps\\minhook\\minhook.lib",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 5,
+				"fragment" : "deps\\imgui\\imgui.lib",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 5,
+				"fragment" : "deps\\fmt\\fmtd.lib",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 7,
+				"fragment" : "steam_api64.lib",
+				"role" : "libraries"
+			},
+			{
+				"fragment" : "kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib",
+				"role" : "libraries"
+			}
+		],
+		"language" : "CXX"
+	},
+	"name" : "achievements",
+	"nameOnDisk" : "Achievements.dll",
+	"paths" : 
+	{
+		"build" : "src/achievements",
+		"source" : "src/achievements"
+	},
+	"sourceGroups" : 
+	[
+		{
+			"name" : "Source Files",
+			"sourceIndexes" : 
+			[
+				0,
+				1,
+				3
+			]
+		},
+		{
+			"name" : "Header Files",
+			"sourceIndexes" : 
+			[
+				2,
+				4
+			]
+		}
+	],
+	"sources" : 
+	[
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "src/achievements/dllmain.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "src/achievements/data.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"path" : "src/achievements/data.hpp",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "src/achievements/render.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"path" : "src/achievements/render.hpp",
+			"sourceGroupIndex" : 1
+		}
+	],
+	"type" : "SHARED_LIBRARY"
+}
