@@ -23,6 +23,15 @@ const DLL_TCP_PORT = 9191;
 
 let mainWindow: BrowserWindow | null = null;
 
+// Packaged builds have no attached console, so plain console.log here is invisible
+// to anyone not running from a dev terminal - mirror it into the renderer's visible
+// UI too, since that's the only thing a non-technical user (or a remote friend,
+// diagnosed only via screenshots) can actually see.
+function logStatus(message: string) {
+  console.log(message);
+  mainWindow?.webContents.send('dll-status', message);
+}
+
 const createWindow = () => {
   // Create the browser window.
   mainWindow = new BrowserWindow({
@@ -52,7 +61,7 @@ const createWindow = () => {
 
 const startDllServer = () => {
   const server = net.createServer((socket) => {
-    console.log('[dll] connected from', socket.remoteAddress);
+    logStatus(`[server] DLL connected from ${socket.remoteAddress}`);
 
     let buffer = '';
     socket.on('data', (chunk) => {
@@ -72,11 +81,11 @@ const startDllServer = () => {
     });
 
     socket.on('close', () => {
-      console.log('[dll] disconnected');
+      logStatus('[server] DLL disconnected');
     });
 
     socket.on('error', (err) => {
-      console.error('[dll] socket error', err.message);
+      logStatus(`[server] socket error: ${err.message}`);
     });
   });
 
@@ -85,17 +94,17 @@ const startDllServer = () => {
       // Expected when running multiple instances for local multi-mic testing - only one
       // window can own this port. Not fatal: this window just won't get live DLL data,
       // use the manual position controls in the UI instead.
-      console.log(
-        `[dll] port ${DLL_TCP_PORT} is already owned by another window - this window ` +
+      logStatus(
+        `[server] port ${DLL_TCP_PORT} is already owned by another window - this window ` +
           'will not receive live DLL data. Use the manual position controls instead.',
       );
       return;
     }
-    console.error('[dll] server error', err.message);
+    logStatus(`[server] server error: ${err.message}`);
   });
 
   server.listen(DLL_TCP_PORT, DLL_TCP_HOST, () => {
-    console.log(`[dll] listening for DLL connections on ${DLL_TCP_HOST}:${DLL_TCP_PORT}`);
+    logStatus(`[server] listening for DLL connections on ${DLL_TCP_HOST}:${DLL_TCP_PORT}`);
   });
 
   return server;

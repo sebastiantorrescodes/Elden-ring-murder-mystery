@@ -1,72 +1,70 @@
-body {
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
-    sans-serif;
-  margin: auto;
-  max-width: 38rem;
-  padding: 2rem;
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* A single fixed dark theme, inspired by the game's stone-and-gold UI - no
+     light-mode variant, same as the game itself only ever has one look. */
+  --background: #0c0a07;
+  --foreground: #e7dcc3;
+  --card: #17130d;
+  --card-foreground: #e7dcc3;
+  --popover: #17130d;
+  --popover-foreground: #e7dcc3;
+  --primary: #c9a24a;
+  --primary-foreground: #17130d;
+  --secondary: #221d14;
+  --secondary-foreground: #e7dcc3;
+  --muted: #1a1610;
+  --muted-foreground: #a89878;
+  --accent: #2a2317;
+  --accent-foreground: #e7dcc3;
+  --destructive: #8b2f2f;
+  --border: #4a3f2a;
+  --input: #221d14;
+  --ring: #c9a24a;
+  --radius: 0.375rem;
+  --font-display: 'Cinzel', ui-serif, serif;
 }
 
-#controls {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --font-display: var(--font-display);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
-#status {
-  color: #666;
-  font-size: 0.9rem;
-  margin-bottom: 1rem;
-}
-
-#peer-list {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 1rem;
-  font-family: Consolas, 'Courier New', monospace;
-  font-size: 0.85rem;
-}
-
-.peer-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.25rem;
-}
-
-.meter-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-  font-family: Consolas, 'Courier New', monospace;
-  font-size: 0.85rem;
-}
-
-.meter {
-  width: 140px;
-  height: 10px;
-  background: #ddd;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.meter-fill {
-  height: 100%;
-  width: 0%;
-  background: #2ecc71;
-  transition: width 60ms linear;
-}
-
-#dll-log {
-  height: 20rem;
-  overflow-y: auto;
-  background: #111;
-  color: #0f0;
-  padding: 1rem;
-  border-radius: 0.5rem;
-  font-family: Consolas, 'Courier New', monospace;
-  font-size: 0.85rem;
-  white-space: pre-wrap;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    background-image: radial-gradient(
+      ellipse at top,
+      color-mix(in oklab, var(--primary) 6%, transparent),
+      transparent 60%
+    );
+    background-attachment: fixed;
+  }
 }

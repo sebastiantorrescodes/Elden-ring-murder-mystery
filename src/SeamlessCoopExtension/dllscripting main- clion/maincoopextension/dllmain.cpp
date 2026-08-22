@@ -24,7 +24,9 @@ DWORD WINAPI MainThread(LPVOID lpParam)
 
 	AllocConsole();
 	std::ofstream myfile;
-	myfile.open(R"(C:\Users\false\Desktop\templog.txt)");
+	char tempDir[MAX_PATH];
+	GetTempPathA(MAX_PATH, tempDir);
+	myfile.open(std::string(tempDir) + "maincoopextension_templog.txt");
     myfile << "loaded \n" << std::endl;
     FILE* f;
     freopen_s(&f, "CONOUT$", "w", stdout);

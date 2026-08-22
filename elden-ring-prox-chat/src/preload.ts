@@ -9,4 +9,9 @@ contextBridge.exposeInMainWorld('dllBridge', {
     ipcRenderer.on('dll-reading', listener);
     return () => ipcRenderer.removeListener('dll-reading', listener);
   },
+  onStatus: (callback: (message: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, message: string) => callback(message);
+    ipcRenderer.on('dll-status', listener);
+    return () => ipcRenderer.removeListener('dll-status', listener);
+  },
 });
