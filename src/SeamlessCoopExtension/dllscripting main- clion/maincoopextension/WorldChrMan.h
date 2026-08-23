@@ -105,5 +105,16 @@ public:
     // via FieldArea - another separate global pointer chain.
     static bool tryReadCamera(Camera& out);
     static void debugCamera();
+
+    // This client's own current "block" id - a much more granular area identifier
+    // than Location.mapId (which only ever distinguishes base game vs DLC). Ported
+    // from EROverlay's boss-tracking module, which divides this by 1000 to bucket
+    // it into named regions (Limgrave, Liurnia, etc.) - the raw value is likely even
+    // more granular than that, closer to "which specific loaded instance" than
+    // Location.mapId is. Also resolved via FieldArea, one deref plus a direct offset
+    // read (no further chain). Unlike Location/Camera, this hasn't been sanity-
+    // checked against live data yet - treat the plausible range as unconfirmed.
+    static bool tryReadBlockId(uint32_t& out);
+    static void debugBlockId();
 };
 #endif // _WORLD_CHR_MAN_H_

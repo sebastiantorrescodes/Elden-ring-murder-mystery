@@ -102,6 +102,7 @@ DWORD WINAPI MainThread(LPVOID lpParam)
             WorldChrMan::debugPlayerCount();
             WorldChrMan::debugLocation();
             WorldChrMan::debugCamera();
+            WorldChrMan::debugBlockId();
             if (!freshBase.isLoaded()) {
                 std::cout << "WorldChrMan not loaded, cannot read player coords" << std::endl;
             } else {
@@ -177,6 +178,17 @@ DWORD WINAPI MainThread(LPVOID lpParam)
                 std::ostringstream cameraLine;
                 cameraLine << "camera yawCos=" << cam.yawCos << " yawSin=" << cam.yawSin;
                 tcpTestClient.sendLine(cameraLine.str());
+            }
+
+            // This client's own current "block" id - see the comment in WorldChrMan.h
+            // for why this is a separate, more granular signal than area mapId=...
+            // above. Sent unconditionally (no sanity check yet) since we don't have
+            // enough live data yet to know what a plausible range even looks like.
+            uint32_t blockId = 0;
+            if (WorldChrMan::tryReadBlockId(blockId)) {
+                std::ostringstream blockLine;
+                blockLine << "block blockId=" << blockId;
+                tcpTestClient.sendLine(blockLine.str());
             }
         }
 	}

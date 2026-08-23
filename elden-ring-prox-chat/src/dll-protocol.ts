@@ -67,3 +67,22 @@ export function parseCameraLine(line: string): DllCameraReading | null {
     yawSin: Number(yawSin),
   };
 }
+
+// This client's own current "block" id (see the BlockId comment in WorldChrMan.h) -
+// a much more granular area identifier than mapId/underground above. This is what
+// the proximity server actually gates on; mapId/underground are kept for other
+// potential uses but no longer drive the same/different-area decision.
+export interface DllBlockReading {
+  blockId: number;
+}
+
+const BLOCK_LINE_PATTERN = /^block blockId=(\d+)$/;
+
+export function parseBlockLine(line: string): DllBlockReading | null {
+  const match = BLOCK_LINE_PATTERN.exec(line.trim());
+  if (!match) return null;
+  const [, blockId] = match;
+  return {
+    blockId: Number(blockId),
+  };
+}

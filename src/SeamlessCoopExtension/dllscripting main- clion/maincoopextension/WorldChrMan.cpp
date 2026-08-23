@@ -16,6 +16,12 @@ static void** FieldAreaIns;
 // EROverlay's own packed-version constant, same format GetGameVersion() returns.
 static size_t LocationOffset = 0x250;
 
+// BlockId offset shift point is a DIFFERENT patch boundary than LocationOffset's
+// (EROverlay's own threshold for this field is 0x0002000200000000ULL, vs
+// LocationOffset's 0x0002000100000000ULL) - kept as two separate constants on
+// purpose, not reused.
+static size_t BlockIdOffset = 0xE8;
+
 //TODO: refactor GameMan's impl here
 void** InitHelper() {
     ModuleData EldenRingData("eldenring.exe");
@@ -33,6 +39,7 @@ void** InitHelper() {
 
     uint64_t gameVersion = GetGameVersion();
     LocationOffset = (gameVersion < 0x0002000100000000ULL) ? 0x248 : 0x250;
+    BlockIdOffset = (gameVersion < 0x0002000200000000ULL) ? 0xE4 : 0xE8;
 
     return WorldChrManIns;
 }
@@ -304,6 +311,21 @@ void WorldChrMan::debugSlot(int playerSlot) {
                << " hp=" << coords.hp << "/" << coords.maxHp << std::endl;
 }
 
+// Live testing turned up a real symptom this guards against: underground is only
+// ever meant to be a small flag (EROverlay only ever checks "underground & 1"), but
+// a misaligned LocationOffset for a given game version can land the whole Location
+// struct read on the wrong bytes - producing something like underground=91422464
+// that LOOKS like a value (so tryReadLocation "succeeds") but is actually garbage.
+// Downstream, the proximity server treats any underground mismatch between two
+// players as "confirmed different area" and locks their volume at a flat fallback
+// regardless of real distance - so trusting garbage here doesn't just mislabel the
+// area, it silently breaks distance-based volume entirely. Reject implausible
+// values here so a bad read is treated as "location unavailable" (falls back to
+// distance-only proximity) rather than confidently wrong.
+static bool saneLocation(const Location& loc) {
+    return loc.underground >= 0 && loc.underground <= 8;
+}
+
 // Local client's own current map/area via CsMenuManImp - see the Location comment
 // in WorldChrMan.h for why this is not per-player-slot data. SEH-wrapped since this
 // chain has more hops than the other reads here.
@@ -325,6 +347,9 @@ bool WorldChrMan::tryReadLocation(Location& out) {
             return false;
         }
         out = *(Location*)(addr + 0x24);
+        if (!saneLocation(out)) {
+            return false;
+        }
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
@@ -375,5 +400,34 @@ void WorldChrMan::debugCamera() {
         return;
     }
     std::cout << "Camera: yawCos=" << cam.yawCos << " yawSin=" << cam.yawSin << std::endl;
+}
+
+// Local client's own current "block" id, ported from EROverlay's boss-tracking
+// module - see the comment in WorldChrMan.h for why this is a much more granular
+// area identifier than Location.mapId. Simpler chain than Location/Camera: one
+// deref of FieldArea, then a direct offset read, no further pointer hops.
+bool WorldChrMan::tryReadBlockId(uint32_t& out) {
+    __try {
+        if (!FieldAreaIns) {
+            return false;
+        }
+        uintptr_t addr = *(uintptr_t*)FieldAreaIns;
+        if (!addr) {
+            return false;
+        }
+        out = *(uint32_t*)(addr + BlockIdOffset);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+void WorldChrMan::debugBlockId() {
+    uint32_t blockId = 0;
+    if (!tryReadBlockId(blockId)) {
+        std::cout << "BlockId: unavailable (FieldArea not resolved or chain broken)" << std::endl;
+        return;
+    }
+    std::cout << "BlockId: " << blockId << std::endl;
 }
 

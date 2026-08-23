@@ -8,6 +8,12 @@ import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 
 const config: ForgeConfig = {
+  // Routes around a stuck lock on the old out/ directory's app.asar (cause
+  // unidentified - no owning process visible, not a Defender detection either).
+  // outDir is the correct top-level Forge option for this (packagerConfig.out is
+  // explicitly omitted from Forge's packager options type and silently ignored).
+  // Safe to remove once the old out/ directory is confirmed unlocked and deleted.
+  outDir: 'out-build',
   packagerConfig: {
     asar: true,
   },

@@ -106,9 +106,11 @@ export class SignalingClient {
     }
   }
 
-  // mapId/underground/yawCos/yawSin are all optional: an older client or the manual test
-  // controls that omit them are treated by the server as "unknown" rather than being
-  // penalized (area: treated as same area/trust distance; facing: no directional cue).
+  // mapId/underground/yawCos/yawSin/blockId are all optional: an older client or the
+  // manual test controls that omit them are treated by the server as "unknown" rather
+  // than being penalized (area/block: trust distance; facing: no directional cue).
+  // blockId is what the server actually gates proximity on - mapId/underground are
+  // kept for other potential uses but no longer drive that decision.
   sendPosition(
     x: number,
     y: number,
@@ -117,8 +119,9 @@ export class SignalingClient {
     underground?: number,
     yawCos?: number,
     yawSin?: number,
+    blockId?: number,
   ) {
-    this.send({ type: 'position', x, y, z, mapId, underground, yawCos, yawSin });
+    this.send({ type: 'position', x, y, z, mapId, underground, yawCos, yawSin, blockId });
   }
 
   sendSignal(to: PeerId, data: unknown) {

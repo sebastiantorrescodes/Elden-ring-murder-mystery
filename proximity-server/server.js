@@ -16,7 +16,7 @@ function isValidIdString(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_ID_LENGTH;
 }
 
-// roomId -> Map<peerId, { ws, x, y, z, mapId, underground, yawCos, yawSin }>
+// roomId -> Map<peerId, { ws, x, y, z, mapId, underground, yawCos, yawSin, blockId }>
 const rooms = new Map();
 
 function getRoom(roomId) {
@@ -143,6 +143,7 @@ wss.on('connection', (ws) => {
         underground: undefined,
         yawCos: undefined,
         yawSin: undefined,
+        blockId: undefined,
       });
       send(ws, {
         type: 'welcome',
@@ -166,12 +167,15 @@ wss.on('connection', (ws) => {
       peer.y = msg.y;
       peer.z = msg.z;
       // Optional - a client that doesn't send these (mock-client.js, manual test
-      // controls, or an older build) is treated by computeGain as "area unknown"
+      // controls, or an older build) is treated by computeGain as "block unknown"
       // and by computeRelativeOffset as "facing unknown" (neutral direction).
+      // mapId/underground are stored but no longer drive the proximity decision -
+      // blockId is what computeGain/computeRelativeOffset actually gate on now.
       peer.mapId = isFiniteNumber(msg.mapId) ? msg.mapId : undefined;
       peer.underground = isFiniteNumber(msg.underground) ? msg.underground : undefined;
       peer.yawCos = isFiniteNumber(msg.yawCos) ? msg.yawCos : undefined;
       peer.yawSin = isFiniteNumber(msg.yawSin) ? msg.yawSin : undefined;
+      peer.blockId = isFiniteNumber(msg.blockId) ? msg.blockId : undefined;
       broadcastVolumes(room);
       return;
     }

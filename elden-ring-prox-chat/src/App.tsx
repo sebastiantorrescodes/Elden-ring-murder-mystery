@@ -15,9 +15,11 @@ import {
   parseDllLine,
   parseAreaLine,
   parseCameraLine,
+  parseBlockLine,
   LOCAL_PLAYER_SLOT,
   type DllAreaReading,
   type DllCameraReading,
+  type DllBlockReading,
 } from './dll-protocol';
 import { SignalingClient } from './signaling-client';
 import { WebRtcMesh, type SignalPayload } from './webrtc-mesh';
@@ -56,10 +58,12 @@ export default function App() {
   const localStreamRef = useRef<MediaStream | null>(null);
   const isConnectingRef = useRef(false);
   const peerGainsRef = useRef(new Map<string, number>());
-  // area/camera lines arrive separately from slot= lines (once per poll cycle, not per
-  // slot) - remember the latest of each so they can be attached to the next position send.
+  // area/camera/block lines arrive separately from slot= lines (once per poll cycle,
+  // not per slot) - remember the latest of each so they can be attached to the next
+  // position send.
   const lastAreaRef = useRef<DllAreaReading | null>(null);
   const lastCameraRef = useRef<DllCameraReading | null>(null);
+  const lastBlockRef = useRef<DllBlockReading | null>(null);
 
   const logRef = useRef<HTMLDivElement | null>(null);
   const localMeterRef = useRef<HTMLDivElement | null>(null);
@@ -252,6 +256,12 @@ export default function App() {
         return;
       }
 
+      const block = parseBlockLine(line);
+      if (block) {
+        lastBlockRef.current = block;
+        return;
+      }
+
       const reading = parseDllLine(line);
       if (reading && reading.slot === LOCAL_PLAYER_SLOT && signalingRef.current) {
         signalingRef.current.sendPosition(
@@ -262,6 +272,7 @@ export default function App() {
           lastAreaRef.current?.underground,
           lastCameraRef.current?.yawCos,
           lastCameraRef.current?.yawSin,
+          lastBlockRef.current?.blockId,
         );
       }
     });

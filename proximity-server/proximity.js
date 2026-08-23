@@ -1,18 +1,30 @@
 'use strict';
 
-// NOTE: the DLL streams "PlayerLocalXCoord/Y/Z" (see WorldChrMan.h) - local/chunk-relative
-// floats, not confirmed to be a single global frame. Two real players' raw coordinates may
-// not be directly comparable across map chunks. This math is verified correct for same-frame
-// coordinates, which is all the mock client below produces; treat real in-game distances as
-// unverified until checked against known player positions in the same area.
+// blockId (see the BlockId comment in WorldChrMan.h) is what gates proximity here -
+// a much more granular area identifier, confirmed against live data, than mapId/
+// underground ever was. Two players' raw ChrIns x/y/z coordinates are only
+// comparable when their blockId matches; otherwise they're in different loaded
+// instances and raw distance between them is meaningless.
 const MIN_RANGE = 5; // full volume at or below this distance
 const MAX_RANGE = 30; // silent at or beyond this distance
 
-// Applied instead of distance math when two players are confirmed to be in different
-// map areas (mapId/underground mismatch, from the DLL's "area mapId=... underground=..."
-// line) - a muffled "nearby but not in the same space" volume, rather than either a
-// meaningless distance number or dead silence at an invisible line.
+// Applied instead of distance math when two players are confirmed to be in
+// different blocks - a muffled "nearby but not in the same space" volume, rather
+// than either a meaningless distance number or dead silence at an invisible line.
 const DIFFERENT_AREA_GAIN = 0.25;
+
+// blockId is optional on each peer - one that hasn't reported it (mock-client.js,
+// the manual test controls, or a client predating this) is treated as "block
+// unknown, trust the distance" rather than forced to DIFFERENT_AREA_GAIN, so
+// distance-only testing still works.
+function sameBlock(self, other) {
+  const blockKnown =
+    self.blockId !== undefined && self.blockId !== null && other.blockId !== undefined && other.blockId !== null;
+  if (!blockKnown) {
+    return true;
+  }
+  return self.blockId === other.blockId;
+}
 
 function distance3D(a, b) {
   const dx = a.x - b.x;
@@ -32,17 +44,10 @@ function distanceGain(distance) {
   return (1 - t) * (1 - t);
 }
 
-// mapId/underground are optional on each peer - one that hasn't reported them (mock-client.js,
-// the manual test controls, or a client predating this) is treated as "area unknown, trust
-// the distance" rather than forced to DIFFERENT_AREA_GAIN, so distance-only testing still works.
 function computeGain(self, other) {
-  const areaKnown =
-    self.mapId !== undefined && self.mapId !== null && other.mapId !== undefined && other.mapId !== null;
-
-  if (areaKnown && (self.mapId !== other.mapId || self.underground !== other.underground)) {
+  if (!sameBlock(self, other)) {
     return DIFFERENT_AREA_GAIN;
   }
-
   return distanceGain(distance3D(self, other));
 }
 
@@ -51,7 +56,7 @@ function computeGain(self, other) {
 // disabled on that node - direction only, volume stays computeGain's job). Falls
 // back to a neutral straight-ahead direction whenever there isn't enough information
 // to compute a real one, rather than a stale or undefined direction: missing facing
-// data, different area (direction is as meaningless as raw distance there), or the
+// data, different block (direction is as meaningless as raw distance there), or the
 // two positions coinciding (no defined direction when distance is ~0).
 //
 // NOTE: which world axis "yaw=0" faces, and the handedness of "right", are a first
@@ -61,17 +66,13 @@ const NEUTRAL_OFFSET = { x: 0, y: 0, z: -1 };
 const MIN_HORIZONTAL_DISTANCE = 0.01;
 
 function computeRelativeOffset(self, other) {
-  const areaKnown =
-    self.mapId !== undefined && self.mapId !== null && other.mapId !== undefined && other.mapId !== null;
-  const differentArea = areaKnown && (self.mapId !== other.mapId || self.underground !== other.underground);
-
   const hasFacing =
     typeof self.yawCos === 'number' &&
     Number.isFinite(self.yawCos) &&
     typeof self.yawSin === 'number' &&
     Number.isFinite(self.yawSin);
 
-  if (differentArea || !hasFacing) {
+  if (!sameBlock(self, other) || !hasFacing) {
     return NEUTRAL_OFFSET;
   }
 
@@ -100,6 +101,7 @@ module.exports = {
   distanceGain,
   computeGain,
   computeRelativeOffset,
+  sameBlock,
   MIN_RANGE,
   MAX_RANGE,
   DIFFERENT_AREA_GAIN,

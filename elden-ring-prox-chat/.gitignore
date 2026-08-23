@@ -90,3 +90,5 @@ typings/
 
 # Electron-Forge
 out/
+# outDir override in forge.config.ts (routes around a stuck file lock on out/)
+out-build/
