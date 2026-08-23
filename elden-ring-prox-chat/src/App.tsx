@@ -273,6 +273,8 @@ export default function App() {
           lastCameraRef.current?.yawCos,
           lastCameraRef.current?.yawSin,
           lastBlockRef.current?.blockId,
+          lastAreaRef.current?.mapX,
+          lastAreaRef.current?.mapY,
         );
       }
     });

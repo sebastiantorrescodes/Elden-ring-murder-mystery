@@ -167,7 +167,8 @@ DWORD WINAPI MainThread(LPVOID lpParam)
             Location loc{};
             if (WorldChrMan::tryReadLocation(loc)) {
                 std::ostringstream areaLine;
-                areaLine << "area mapId=" << loc.mapId << " underground=" << loc.underground;
+                areaLine << "area mapId=" << loc.mapId << " underground=" << loc.underground
+                          << " mapX=" << loc.x << " mapY=" << loc.y;
                 tcpTestClient.sendLine(areaLine.str());
             }
 

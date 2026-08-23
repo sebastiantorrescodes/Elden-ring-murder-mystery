@@ -34,17 +34,22 @@ export const LOCAL_PLAYER_SLOT = 0;
 export interface DllAreaReading {
   mapId: number;
   underground: number;
+  mapX: number;
+  mapY: number;
 }
 
-const AREA_LINE_PATTERN = /^area mapId=(-?\d+) underground=(-?\d+)$/;
+const AREA_LINE_PATTERN =
+  /^area mapId=(-?\d+) underground=(-?\d+) mapX=([-\d.]+) mapY=([-\d.]+)$/;
 
 export function parseAreaLine(line: string): DllAreaReading | null {
   const match = AREA_LINE_PATTERN.exec(line.trim());
   if (!match) return null;
-  const [, mapId, underground] = match;
+  const [, mapId, underground, mapX, mapY] = match;
   return {
     mapId: Number(mapId),
     underground: Number(underground),
+    mapX: Number(mapX),
+    mapY: Number(mapY),
   };
 }
 

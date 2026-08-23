@@ -356,14 +356,49 @@ bool WorldChrMan::tryReadLocation(Location& out) {
     }
 }
 
+// Mirrors tryReadLocation's walk but reports which stage failed instead of
+// collapsing every failure into one opaque message. Kept separate from
+// tryReadLocation (rather than adding a verbose flag there) since that
+// function also runs unlogged on the 250ms TCP poll loop in dllmain.cpp.
 void WorldChrMan::debugLocation() {
-    Location loc{};
-    if (!tryReadLocation(loc)) {
-        std::cout << "Location: unavailable (CsMenuManImp not resolved or chain broken)" << std::endl;
-        return;
+    std::cout << "Location: CsMenuManImpIns=" << std::hex << (void*)CsMenuManImpIns
+               << " LocationOffset=0x" << LocationOffset << std::dec << std::endl;
+    __try {
+        if (!CsMenuManImpIns) {
+            std::cout << "Location: unavailable - CsMenuManImpIns is null (signature scan never matched at init)" << std::endl;
+            return;
+        }
+        uintptr_t addr = *(uintptr_t*)CsMenuManImpIns;
+        std::cout << "Location: [CsMenuManImpIns] = " << std::hex << addr << std::dec << std::endl;
+        if (!addr) {
+            std::cout << "Location: unavailable - CsMenuManImpIns points to a null instance" << std::endl;
+            return;
+        }
+        addr = *(uintptr_t*)(addr + 0x80);
+        std::cout << "Location: [+0x80] = " << std::hex << addr << std::dec << std::endl;
+        if (!addr) {
+            std::cout << "Location: unavailable - +0x80 hop is null" << std::endl;
+            return;
+        }
+        addr = *(uintptr_t*)(addr + LocationOffset);
+        std::cout << "Location: [+LocationOffset] = " << std::hex << addr << std::dec << std::endl;
+        if (!addr) {
+            std::cout << "Location: unavailable - +LocationOffset hop is null" << std::endl;
+            return;
+        }
+        Location loc = *(Location*)(addr + 0x24);
+        std::cout << "Location: raw mapId=" << loc.mapId << " underground=" << loc.underground
+                   << " mapX=" << loc.x << " mapY=" << loc.y << " oriDeg=" << loc.oriDeg << std::endl;
+        if (!saneLocation(loc)) {
+            std::cout << "Location: unavailable - underground=" << loc.underground
+                       << " failed sanity check (expected 0-8) - likely a LocationOffset mismatch for this game version" << std::endl;
+            return;
+        }
+        std::cout << "Location: mapId=" << loc.mapId << " underground=" << loc.underground
+                   << " mapX=" << loc.x << " mapY=" << loc.y << " oriDeg=" << loc.oriDeg << std::endl;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        std::cout << "Location: unavailable - read faulted (access violation mid-chain)" << std::endl;
     }
-    std::cout << "Location: mapId=" << loc.mapId << " underground=" << loc.underground
-               << " mapX=" << loc.x << " mapY=" << loc.y << " oriDeg=" << loc.oriDeg << std::endl;
 }
 
 // Local client's own current camera facing via FieldArea - see the Camera comment

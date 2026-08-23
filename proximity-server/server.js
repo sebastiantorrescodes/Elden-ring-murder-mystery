@@ -16,7 +16,7 @@ function isValidIdString(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_ID_LENGTH;
 }
 
-// roomId -> Map<peerId, { ws, x, y, z, mapId, underground, yawCos, yawSin, blockId }>
+// roomId -> Map<peerId, { ws, x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY }>
 const rooms = new Map();
 
 function getRoom(roomId) {
@@ -144,6 +144,8 @@ wss.on('connection', (ws) => {
         yawCos: undefined,
         yawSin: undefined,
         blockId: undefined,
+        mapX: undefined,
+        mapY: undefined,
       });
       send(ws, {
         type: 'welcome',
@@ -176,6 +178,8 @@ wss.on('connection', (ws) => {
       peer.yawCos = isFiniteNumber(msg.yawCos) ? msg.yawCos : undefined;
       peer.yawSin = isFiniteNumber(msg.yawSin) ? msg.yawSin : undefined;
       peer.blockId = isFiniteNumber(msg.blockId) ? msg.blockId : undefined;
+      peer.mapX = isFiniteNumber(msg.mapX) ? msg.mapX : undefined;
+      peer.mapY = isFiniteNumber(msg.mapY) ? msg.mapY : undefined;
       broadcastVolumes(room);
       return;
     }

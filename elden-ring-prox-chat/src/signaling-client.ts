@@ -106,11 +106,12 @@ export class SignalingClient {
     }
   }
 
-  // mapId/underground/yawCos/yawSin/blockId are all optional: an older client or the
-  // manual test controls that omit them are treated by the server as "unknown" rather
-  // than being penalized (area/block: trust distance; facing: no directional cue).
-  // blockId is what the server actually gates proximity on - mapId/underground are
-  // kept for other potential uses but no longer drive that decision.
+  // mapId/underground/yawCos/yawSin/blockId/mapX/mapY are all optional: an older
+  // client or the manual test controls that omit them are treated by the server as
+  // "unknown" rather than being penalized (area/block: trust distance; facing: no
+  // directional cue). blockId is what the server actually gates proximity on -
+  // mapId/underground/mapX/mapY are kept for other potential uses but don't drive
+  // that decision (yet, for mapX/mapY - see the Location comment in WorldChrMan.h).
   sendPosition(
     x: number,
     y: number,
@@ -120,8 +121,10 @@ export class SignalingClient {
     yawCos?: number,
     yawSin?: number,
     blockId?: number,
+    mapX?: number,
+    mapY?: number,
   ) {
-    this.send({ type: 'position', x, y, z, mapId, underground, yawCos, yawSin, blockId });
+    this.send({ type: 'position', x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY });
   }
 
   sendSignal(to: PeerId, data: unknown) {
