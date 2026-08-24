@@ -2,10 +2,29 @@
 #include "pch.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mstcpip.h>
 #include <iostream>
 
 namespace {
     constexpr unsigned long long kReconnectCooldownMs = 3000;
+
+    // Windows' default SO_KEEPALIVE idle time is 2 HOURS before the first probe -
+    // effectively useless for noticing a dead peer (Electron app closed uncleanly,
+    // machine slept/resumed, etc.) any faster than the next failed send() would
+    // anyway. Overriding via WSAIoctl so a genuinely dead connection gets detected
+    // and reconnected within a few seconds instead of sitting "connected" but silently
+    // dropping data for a long stretch.
+    void enableKeepAlive(SOCKET s) {
+        BOOL enable = TRUE;
+        setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, (const char*)&enable, sizeof(enable));
+
+        tcp_keepalive settings{};
+        settings.onoff = 1;
+        settings.keepalivetime = 5000;     // ms idle before the first probe
+        settings.keepaliveinterval = 1000; // ms between probes
+        DWORD bytesReturned = 0;
+        WSAIoctl(s, SIO_KEEPALIVE_VALS, &settings, sizeof(settings), nullptr, 0, &bytesReturned, nullptr, nullptr);
+    }
 }
 
 TcpTestClient::TcpTestClient(const char* host, unsigned short port)
@@ -61,9 +80,15 @@ bool TcpTestClient::tryConnect() {
     }
 
     if (connect(s, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+        // Previously silent - with no log line here, a run of failed reconnects was
+        // indistinguishable from the thing just working, from the DLL console alone.
+        std::cout << "[tcp] connect() failed: " << WSAGetLastError()
+                   << ", will retry in " << kReconnectCooldownMs << "ms" << std::endl;
         closesocket(s);
         return false;
     }
+
+    enableKeepAlive(s);
 
     sock = (uintptr_t)s;
     connected = true;

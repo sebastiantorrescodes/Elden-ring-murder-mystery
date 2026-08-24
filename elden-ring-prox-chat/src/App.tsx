@@ -29,6 +29,11 @@ interface PeerRow {
   gain: number;
 }
 
+// DLL polls every 250ms (dllmain.cpp) - anything past a couple seconds of silence
+// means something's actually wrong (game closed, DLL unloaded, TCP layer still
+// reconnecting), not just poll-cycle jitter.
+const DLL_STALE_THRESHOLD_MS = 2000;
+
 function Meter({ innerRef }: { innerRef: React.Ref<HTMLDivElement> }) {
   return (
     <div className="h-2.5 w-36 overflow-hidden rounded-full bg-muted">
@@ -64,6 +69,12 @@ export default function App() {
   const lastAreaRef = useRef<DllAreaReading | null>(null);
   const lastCameraRef = useRef<DllCameraReading | null>(null);
   const lastBlockRef = useRef<DllBlockReading | null>(null);
+  // Timestamp of the last DLL reading of any kind - the TCP layer already
+  // reconnects on its own (see TcpTestClient.cpp), but nothing previously told the
+  // UI when data had actually stopped arriving; it just kept showing whatever the
+  // last line was, forever. 0 means "never received one yet".
+  const lastReadingAtRef = useRef(0);
+  const wasStaleRef = useRef(false);
 
   const logRef = useRef<HTMLDivElement | null>(null);
   const localMeterRef = useRef<HTMLDivElement | null>(null);
@@ -241,6 +252,11 @@ export default function App() {
     });
     const unsubscribeReading = window.dllBridge.onReading((line) => {
       console.log('[dll]', line);
+      lastReadingAtRef.current = Date.now();
+      if (wasStaleRef.current) {
+        wasStaleRef.current = false;
+        appendLog('[dll] data resumed');
+      }
       setDllStatus('Receiving live DLL data:');
       appendLog(line);
 
@@ -278,9 +294,24 @@ export default function App() {
         );
       }
     });
+
+    // TCP-level reconnect already happens on its own (TcpTestClient.cpp), but until
+    // it does, this is what actually surfaces "the DLL has gone quiet" in the UI -
+    // otherwise dllStatus just sits on the last thing that happened, indistinguishable
+    // from data still flowing normally.
+    const staleCheckInterval = setInterval(() => {
+      if (lastReadingAtRef.current === 0) return; // never received anything yet
+      const idleMs = Date.now() - lastReadingAtRef.current;
+      if (idleMs > DLL_STALE_THRESHOLD_MS) {
+        wasStaleRef.current = true;
+        setDllStatus(`No DLL data received in ${Math.round(idleMs / 1000)}s - is the game/DLL still running?`);
+      }
+    }, 1000);
+
     return () => {
       unsubscribeStatus();
       unsubscribeReading();
+      clearInterval(staleCheckInterval);
     };
   }, []);
 

@@ -311,30 +311,24 @@ void WorldChrMan::debugSlot(int playerSlot) {
                << " hp=" << coords.hp << "/" << coords.maxHp << std::endl;
 }
 
-// Live testing turned up a real symptom this guards against: underground is only
-// ever meant to be a small flag (EROverlay only ever checks "underground & 1"), but
-// a misaligned LocationOffset for a given game version can land the whole Location
-// struct read on the wrong bytes - producing something like underground=91422464
-// that LOOKS like a value (so tryReadLocation "succeeds") but is actually garbage.
-// Downstream, the proximity server treats any underground mismatch between two
-// players as "confirmed different area" and locks their volume at a flat fallback
-// regardless of real distance - so trusting garbage here doesn't just mislabel the
-// area, it silently breaks distance-based volume entirely. Reject implausible
-// values here so a bad read is treated as "location unavailable" (falls back to
-// distance-only proximity) rather than confidently wrong.
-// mapX/mapY have no confirmed real-world range yet (unlike underground, which
-// EROverlay treats as a small flag) - now that the proximity server drives volume
-// solely off mapX/mapY (see proximity.js), a garbage read here doesn't just mislabel
-// area, it directly produces a wrong/random volume instead of failing safe. This just
-// rejects outright garbage (NaN/Inf, or a magnitude far beyond anything the game
-// world could plausibly span) from a misaligned LocationOffset - not a tightly-tuned
-// bound. Tighten once real in-game mapX/mapY values have actually been observed.
+// Used to gate on underground being in [0, 8] here too (EROverlay only ever checks
+// "underground & 1", so it should only ever be a small flag) - dropped after live
+// testing showed underground reading obviously-garbage values (e.g. -697717248)
+// on the exact same reads where mapX/mapY/oriDeg all came back completely
+// plausible. That pattern doesn't look like a misaligned chain (which would
+// scramble every field, not just one) - it looks like underground specifically is
+// aliased onto the wrong bytes for this game version, while the rest of the struct
+// lines up fine. Since the proximity server no longer uses mapId/underground for
+// anything (mapX/mapY drive it directly - see proximity.js), that one broken,
+// unused field was doing nothing but vetoing perfectly good mapX/mapY reads. Only
+// mapX/mapY are validated now - the fields actually relied on downstream.
+// No confirmed real-world range for mapX/mapY yet, so this just rejects outright
+// garbage (NaN/Inf, or a magnitude far beyond anything the game world could
+// plausibly span) from a misaligned LocationOffset - not a tightly-tuned bound.
+// Tighten once real in-game mapX/mapY values have actually been observed.
 constexpr float kMapCoordSanityBound = 1'000'000.0f;
 
 static bool saneLocation(const Location& loc) {
-    if (loc.underground < 0 || loc.underground > 8) {
-        return false;
-    }
     if (!std::isfinite(loc.x) || !std::isfinite(loc.y)) {
         return false;
     }
@@ -408,8 +402,9 @@ void WorldChrMan::debugLocation() {
         std::cout << "Location: raw mapId=" << loc.mapId << " underground=" << loc.underground
                    << " mapX=" << loc.x << " mapY=" << loc.y << " oriDeg=" << loc.oriDeg << std::endl;
         if (!saneLocation(loc)) {
-            std::cout << "Location: unavailable - underground=" << loc.underground
-                       << " failed sanity check (expected 0-8) - likely a LocationOffset mismatch for this game version" << std::endl;
+            std::cout << "Location: unavailable - mapX=" << loc.x << " mapY=" << loc.y
+                       << " failed sanity check (non-finite or |value| > " << kMapCoordSanityBound
+                       << ") - likely a LocationOffset mismatch for this game version" << std::endl;
             return;
         }
         std::cout << "Location: mapId=" << loc.mapId << " underground=" << loc.underground

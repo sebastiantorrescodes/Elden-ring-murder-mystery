@@ -1,0 +1,18 @@
+{
+  "files.watcherExclude": {
+    "**/out-build/**": true,
+    "**/out/**": true,
+    "**/node_modules/**": true,
+    "**/cmake-build-*/**": true
+  },
+  "search.exclude": {
+    "**/out-build": true,
+    "**/out": true,
+    "**/node_modules": true,
+    "**/cmake-build-*": true
+  },
+  "files.exclude": {
+    "**/out-build": true,
+    "**/out": true
+  }
+}

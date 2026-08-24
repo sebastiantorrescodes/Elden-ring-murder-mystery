@@ -62,6 +62,11 @@ const createWindow = () => {
 const startDllServer = () => {
   const server = net.createServer((socket) => {
     logStatus(`[server] DLL connected from ${socket.remoteAddress}`);
+    // Matches the DLL's own keepalive timing (TcpTestClient.cpp) - without this, a
+    // peer that vanishes without a clean FIN/RST (crash, sleep/resume) can leave this
+    // socket looking alive for a long time with no data flowing, since nothing here
+    // is actively writing to notice a failed send.
+    socket.setKeepAlive(true, 5000);
 
     let buffer = '';
     socket.on('data', (chunk) => {
