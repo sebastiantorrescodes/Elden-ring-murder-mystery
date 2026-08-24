@@ -1,40 +1,17 @@
 'use strict';
 
-// blockId (see the BlockId comment in WorldChrMan.h) is what gates proximity here -
-// a much more granular area identifier, confirmed against live data, than mapId/
-// underground ever was. Two players' positions are only comparable when their
-// blockId matches; otherwise they're in different loaded instances and distance
-// between them is meaningless. (The gain distance itself is computed from mapX/mapY
-// now, not raw ChrIns coordinates - see hasMapPosition/mapDistance below - but the
-// same "different block = incomparable" logic still applies to those.)
 const MIN_RANGE = 5; // full volume at or below this distance
 const MAX_RANGE = 30; // silent at or beyond this distance
 
-// Applied instead of distance math when two players are confirmed to be in
-// different blocks - raw distance between them is meaningless at that point (they
-// may not even be in overlapping coordinate spaces), so cut audio entirely rather
-// than guess at a "nearby but not in the same space" volume.
-const DIFFERENT_AREA_GAIN = 0;
-
-// blockId is optional on each peer - one that hasn't reported it (mock-client.js,
-// the manual test controls, or a client predating this) is treated as "block
-// unknown, trust the distance" rather than forced to DIFFERENT_AREA_GAIN, so
-// distance-only testing still works.
-function sameBlock(self, other) {
-  const blockKnown =
-    self.blockId !== undefined && self.blockId !== null && other.blockId !== undefined && other.blockId !== null;
-  if (!blockKnown) {
-    return true;
-  }
-  return self.blockId === other.blockId;
-}
-
 // mapX/mapY (see the Location comment in WorldChrMan.h) come from each client's own
-// CsMenuManImp read, sent alongside raw x/y/z. This is the ONLY thing the gain
-// distance is computed from now - no fallback to raw x/y/z, and no z/depth
-// contribution (that was a brief experiment - see git history for the weighted-z
-// version if it's ever wanted back). One consequence: a peer that hasn't reported
-// map coordinates yet can't have a gain computed at all - see hasMapPosition below.
+// CsMenuManImp read, sent alongside raw x/y/z. mapX/mapY plus raw z (the "depth"
+// reading - Location has no third axis of its own, so z is borrowed straight from
+// the raw x/y/z reading below) drive the gain distance - no raw x/y, and no blockId
+// gating either (mapX/mapY alone proved reliable enough in testing that the
+// "confirmed different instance" blockId check was dropped - see git history for
+// sameBlock/DIFFERENT_AREA_GAIN if it's ever wanted back). One consequence: a peer
+// that hasn't reported map coordinates yet can't have a gain computed at all - see
+// hasMapPosition below.
 function hasMapPosition(peer) {
   return (
     typeof peer.mapX === 'number' && Number.isFinite(peer.mapX) &&
@@ -42,10 +19,18 @@ function hasMapPosition(peer) {
   );
 }
 
+// z is scaled down before entering the Euclidean sum so it counts for less than an
+// equivalent gap in mapX/mapY - a unit of z separation contributes Z_WEIGHT^2 as
+// much to the total (squared) distance as a unit of mapX/mapY separation. Opposite
+// of an earlier experiment that weighted z up instead (see git history) - untested
+// against real gameplay, tune to taste once you've felt it in-game.
+const Z_WEIGHT = 0.5;
+
 function mapDistance(a, b) {
   const dx = a.mapX - b.mapX;
   const dy = a.mapY - b.mapY;
-  return Math.sqrt(dx * dx + dy * dy);
+  const dz = (a.z - b.z) * Z_WEIGHT;
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
 // Eased falloff (t normalized 0..1 across the range, gain = (1-t)^2) rather than a
@@ -60,9 +45,6 @@ function distanceGain(distance) {
 }
 
 function computeGain(self, other) {
-  if (!sameBlock(self, other)) {
-    return DIFFERENT_AREA_GAIN;
-  }
   // No raw x/y/z fallback anymore (see hasMapPosition) - a peer without map
   // coordinates yet (just joined, older client, mock-client.js) has no distance
   // that can be computed, so silence rather than guess.
@@ -77,8 +59,7 @@ function computeGain(self, other) {
 // disabled on that node - direction only, volume stays computeGain's job). Falls
 // back to a neutral straight-ahead direction whenever there isn't enough information
 // to compute a real one, rather than a stale or undefined direction: missing facing
-// data, different block (direction is as meaningless as raw distance there), or the
-// two positions coinciding (no defined direction when distance is ~0).
+// data, or the two positions coinciding (no defined direction when distance is ~0).
 //
 // NOTE: which world axis "yaw=0" faces was a first attempt ported from the DLL's
 // Camera struct. Left/right handedness has since been confirmed in-game and fixed
@@ -99,7 +80,7 @@ function computeRelativeOffset(self, other) {
     typeof self.yawSin === 'number' &&
     Number.isFinite(self.yawSin);
 
-  if (!sameBlock(self, other) || !hasFacing) {
+  if (!hasFacing) {
     return NEUTRAL_OFFSET;
   }
 
@@ -131,8 +112,6 @@ module.exports = {
   distanceGain,
   computeGain,
   computeRelativeOffset,
-  sameBlock,
   MIN_RANGE,
   MAX_RANGE,
-  DIFFERENT_AREA_GAIN,
 };
