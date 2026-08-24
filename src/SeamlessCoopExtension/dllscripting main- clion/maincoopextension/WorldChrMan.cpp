@@ -322,8 +322,26 @@ void WorldChrMan::debugSlot(int playerSlot) {
 // area, it silently breaks distance-based volume entirely. Reject implausible
 // values here so a bad read is treated as "location unavailable" (falls back to
 // distance-only proximity) rather than confidently wrong.
+// mapX/mapY have no confirmed real-world range yet (unlike underground, which
+// EROverlay treats as a small flag) - now that the proximity server drives volume
+// solely off mapX/mapY (see proximity.js), a garbage read here doesn't just mislabel
+// area, it directly produces a wrong/random volume instead of failing safe. This just
+// rejects outright garbage (NaN/Inf, or a magnitude far beyond anything the game
+// world could plausibly span) from a misaligned LocationOffset - not a tightly-tuned
+// bound. Tighten once real in-game mapX/mapY values have actually been observed.
+constexpr float kMapCoordSanityBound = 1'000'000.0f;
+
 static bool saneLocation(const Location& loc) {
-    return loc.underground >= 0 && loc.underground <= 8;
+    if (loc.underground < 0 || loc.underground > 8) {
+        return false;
+    }
+    if (!std::isfinite(loc.x) || !std::isfinite(loc.y)) {
+        return false;
+    }
+    if (std::fabs(loc.x) > kMapCoordSanityBound || std::fabs(loc.y) > kMapCoordSanityBound) {
+        return false;
+    }
+    return true;
 }
 
 // Local client's own current map/area via CsMenuManImp - see the Location comment

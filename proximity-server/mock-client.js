@@ -31,6 +31,14 @@ let x = Math.random() * 20 - 10;
 let y = 0;
 let z = Math.random() * 20 - 10;
 
+// proximity.js's gain calc is driven solely by mapX/mapY now (raw x/y/z is still
+// required by the server's message validation and still used for direction, but no
+// longer for distance/gain) - mirror the same random walk onto mapX/mapY so this
+// still exercises real proximity behavior without the game/DLL. Simplest option:
+// just reuse x/z's walk rather than drifting a second, independent pair of values.
+let mapX = x;
+let mapY = z;
+
 ws.on('open', () => {
   console.log(`[${PLAYER_ID}] connected to ${SERVER_URL}, joining room "${ROOM}"`);
   ws.send(JSON.stringify({ type: 'join', room: ROOM, id: PLAYER_ID }));
@@ -38,7 +46,9 @@ ws.on('open', () => {
   setInterval(() => {
     x += (Math.random() - 0.5) * 2;
     z += (Math.random() - 0.5) * 2;
-    ws.send(JSON.stringify({ type: 'position', x, y, z }));
+    mapX = x;
+    mapY = z;
+    ws.send(JSON.stringify({ type: 'position', x, y, z, mapX, mapY }));
   }, 250);
 });
 
