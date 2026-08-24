@@ -2,9 +2,11 @@
 
 // blockId (see the BlockId comment in WorldChrMan.h) is what gates proximity here -
 // a much more granular area identifier, confirmed against live data, than mapId/
-// underground ever was. Two players' raw ChrIns x/y/z coordinates are only
-// comparable when their blockId matches; otherwise they're in different loaded
-// instances and raw distance between them is meaningless.
+// underground ever was. Two players' positions are only comparable when their
+// blockId matches; otherwise they're in different loaded instances and distance
+// between them is meaningless. (The gain distance itself is computed from mapX/mapY
+// now, not raw ChrIns coordinates - see hasMapPosition/mapDistance below - but the
+// same "different block = incomparable" logic still applies to those.)
 const MIN_RANGE = 5; // full volume at or below this distance
 const MAX_RANGE = 30; // silent at or beyond this distance
 
@@ -28,14 +30,11 @@ function sameBlock(self, other) {
 }
 
 // mapX/mapY (see the Location comment in WorldChrMan.h) come from each client's own
-// CsMenuManImp read, sent alongside raw x/y/z. Preferred over raw x/y for the gain
-// distance since raw ChrIns coordinates are local-origin-relative per loaded block;
-// z is kept from the raw reading regardless (Location has no third axis). Only used
-// when BOTH peers have reported map coordinates - mixing a map coordinate from one
-// peer with a raw coordinate from the other would compare two different coordinate
-// spaces. Falls back to raw x/y/z for both when either is missing (mock-client.js,
-// an older client, or before the first Location read lands), so distance-only
-// testing without the game/DLL still works.
+// CsMenuManImp read, sent alongside raw x/y/z. This is the ONLY thing the gain
+// distance is computed from now - no fallback to raw x/y/z, and no z/depth
+// contribution (that was a brief experiment - see git history for the weighted-z
+// version if it's ever wanted back). One consequence: a peer that hasn't reported
+// map coordinates yet can't have a gain computed at all - see hasMapPosition below.
 function hasMapPosition(peer) {
   return (
     typeof peer.mapX === 'number' && Number.isFinite(peer.mapX) &&
@@ -43,25 +42,10 @@ function hasMapPosition(peer) {
   );
 }
 
-// z (the raw depth reading, kept as-is even when x/y switch to mapX/mapY above) is
-// weighted extra heavily here so a given gap along z quiets the chat faster than the
-// same gap along mapX/mapY - e.g. two players a few units apart but on different
-// floors/levels stay muffled instead of reading as "close". Multiplying dz before it
-// goes into the Euclidean sum below means a unit of z separation counts Z_WEIGHT^2
-// as much toward the total (squared) distance as a unit of x/y separation - untested
-// against real gameplay yet, tune to taste once you've felt it in-game.
-const Z_WEIGHT = 2;
-
-function distance3D(a, b) {
-  const useMap = hasMapPosition(a) && hasMapPosition(b);
-  const ax = useMap ? a.mapX : a.x;
-  const ay = useMap ? a.mapY : a.y;
-  const bx = useMap ? b.mapX : b.x;
-  const by = useMap ? b.mapY : b.y;
-  const dx = ax - bx;
-  const dy = ay - by;
-  const dz = (a.z - b.z) * Z_WEIGHT;
-  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+function mapDistance(a, b) {
+  const dx = a.mapX - b.mapX;
+  const dy = a.mapY - b.mapY;
+  return Math.sqrt(dx * dx + dy * dy);
 }
 
 // Eased falloff (t normalized 0..1 across the range, gain = (1-t)^2) rather than a
@@ -79,7 +63,13 @@ function computeGain(self, other) {
   if (!sameBlock(self, other)) {
     return DIFFERENT_AREA_GAIN;
   }
-  return distanceGain(distance3D(self, other));
+  // No raw x/y/z fallback anymore (see hasMapPosition) - a peer without map
+  // coordinates yet (just joined, older client, mock-client.js) has no distance
+  // that can be computed, so silence rather than guess.
+  if (!hasMapPosition(self) || !hasMapPosition(other)) {
+    return 0;
+  }
+  return distanceGain(mapDistance(self, other));
 }
 
 // Rotates a peer's position into "relative to the listener, in the listener's own
@@ -137,7 +127,7 @@ function computeRelativeOffset(self, other) {
 }
 
 module.exports = {
-  distance3D,
+  mapDistance,
   distanceGain,
   computeGain,
   computeRelativeOffset,
