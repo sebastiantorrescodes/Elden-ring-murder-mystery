@@ -54,9 +54,6 @@ const createWindow = () => {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
-
-  // Open the DevTools.
-  mainWindow.webContents.openDevTools();
 };
 
 const startDllServer = () => {

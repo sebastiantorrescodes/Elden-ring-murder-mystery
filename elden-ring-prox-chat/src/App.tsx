@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Settings as SettingsIcon, ArrowLeft } from 'lucide-react';
 import {
   parseDllLine,
   parseAreaLine,
@@ -26,6 +27,7 @@ import { WebRtcMesh, type SignalPayload } from './webrtc-mesh';
 
 interface PeerRow {
   id: string;
+  displayName: string;
   gain: number;
 }
 
@@ -33,6 +35,37 @@ interface PeerRow {
 // means something's actually wrong (game closed, DLL unloaded, TCP layer still
 // reconnecting), not just poll-cycle jitter.
 const DLL_STALE_THRESHOLD_MS = 2000;
+
+// Only one server in use - not something worth exposing as an editable field.
+const SERVER_URL = 'wss://er-proximity-chat.duckdns.org';
+
+const PLAYER_ID_STORAGE_KEY = 'elden-ring-prox-chat:playerId';
+const DISPLAY_NAME_STORAGE_KEY = 'elden-ring-prox-chat:displayName';
+
+// Stable per-install identity used for peer routing (server.js's room Map key) - not
+// something the user picks or sees; displayName (below) is what's actually shown.
+// Persisted so reconnecting/restarting the app doesn't churn peer ids for no reason.
+function getOrCreatePlayerId(): string {
+  try {
+    const existing = localStorage.getItem(PLAYER_ID_STORAGE_KEY);
+    if (existing) return existing;
+    const fresh = crypto.randomUUID();
+    localStorage.setItem(PLAYER_ID_STORAGE_KEY, fresh);
+    return fresh;
+  } catch {
+    // localStorage unavailable for some reason - still lets the app work, just
+    // without a stable id across restarts.
+    return crypto.randomUUID();
+  }
+}
+
+function getStoredDisplayName(): string {
+  try {
+    return localStorage.getItem(DISPLAY_NAME_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
 
 function Meter({ innerRef }: { innerRef: React.Ref<HTMLDivElement> }) {
   return (
@@ -42,11 +75,20 @@ function Meter({ innerRef }: { innerRef: React.Ref<HTMLDivElement> }) {
   );
 }
 
+type View = 'landing' | 'settings';
+
 export default function App() {
-  const [serverUrl, setServerUrl] = useState('wss://er-proximity-chat.duckdns.org');
-  const [roomSecret, setRoomSecret] = useState('');
-  const [playerId, setPlayerId] = useState('');
-  const [roomId, setRoomId] = useState('test-room');
+  // Only meaningful while !isConnected - Host/Join (the only ways to become
+  // connected) only exist on the landing view, so there's no path from settings
+  // straight into a connected session that would leave this stale.
+  const [view, setView] = useState<View>('landing');
+  const [playerId] = useState(() => getOrCreatePlayerId());
+  const [displayName, setDisplayName] = useState(() => getStoredDisplayName());
+  // What's typed into the "join" field - distinct from activeRoomCode (the room
+  // actually connected to, whether hosted or joined), so hosting doesn't require
+  // clearing this out first and joining doesn't overwrite it mid-edit.
+  const [roomCodeInput, setRoomCodeInput] = useState('');
+  const [activeRoomCode, setActiveRoomCode] = useState('');
   const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedMic, setSelectedMic] = useState('');
   const [muted, setMuted] = useState(false);
@@ -63,6 +105,7 @@ export default function App() {
   const localStreamRef = useRef<MediaStream | null>(null);
   const isConnectingRef = useRef(false);
   const peerGainsRef = useRef(new Map<string, number>());
+  const peerDisplayNamesRef = useRef(new Map<string, string>());
   // area/camera/block lines arrive separately from slot= lines (once per poll cycle,
   // not per slot) - remember the latest of each so they can be attached to the next
   // position send.
@@ -88,7 +131,13 @@ export default function App() {
   };
 
   const syncPeerRows = () => {
-    setPeers([...peerGainsRef.current.entries()].map(([id, gain]) => ({ id, gain })));
+    setPeers(
+      [...peerGainsRef.current.entries()].map(([id, gain]) => ({
+        id,
+        displayName: peerDisplayNamesRef.current.get(id) ?? id,
+        gain,
+      })),
+    );
   };
 
   // Device labels are blank until a mic permission has been granted at least once,
@@ -135,19 +184,25 @@ export default function App() {
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
     peerGainsRef.current.clear();
+    peerDisplayNamesRef.current.clear();
     peerMeterRefs.current.clear();
     setPeers([]);
+    setActiveRoomCode('');
     setStatus('disconnected');
     setIsConnected(false);
+    setView('landing');
   };
 
-  const doConnect = async () => {
-    const url = serverUrl.trim() || 'ws://localhost:8080';
-    const secret = roomSecret.trim() || undefined;
-    const resolvedPlayerId =
-      playerId.trim() || `player-${Math.random().toString(36).slice(2, 6)}`;
-    const room = roomId.trim() || 'test-room';
-    setPlayerId(resolvedPlayerId);
+  // Shared by both hosting and joining - the only difference is whether `room` is
+  // passed (join an existing room code) or omitted (ask the server to create one).
+  const connect = async (room: string | undefined) => {
+    const name = displayName.trim() || 'Player';
+    setDisplayName(name);
+    try {
+      localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, name);
+    } catch {
+      // non-fatal - just won't be remembered next launch
+    }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -167,31 +222,36 @@ export default function App() {
     }
 
     const signaling = new SignalingClient({
-      url,
+      url: SERVER_URL,
+      playerId,
+      displayName: name,
       room,
-      playerId: resolvedPlayerId,
-      secret,
       onOpen: () => {
-        setStatus(`connected as ${resolvedPlayerId} in room "${room}"`);
-        setIsConnected(true);
+        setStatus(room ? `joining room ${room}…` : 'creating room…');
       },
       onClose: cleanup,
       onError: () => setStatus('connection error'),
       onWelcome: (msg) => {
-        for (const peerId of msg.peers) {
-          meshRef.current?.registerExistingPeer(peerId);
-          if (!peerGainsRef.current.has(peerId)) peerGainsRef.current.set(peerId, 1);
+        setActiveRoomCode(msg.room);
+        setStatus(`connected as "${name}" in room ${msg.room}`);
+        setIsConnected(true);
+        for (const peer of msg.peers) {
+          meshRef.current?.registerExistingPeer(peer.id);
+          peerDisplayNamesRef.current.set(peer.id, peer.displayName);
+          if (!peerGainsRef.current.has(peer.id)) peerGainsRef.current.set(peer.id, 1);
         }
         syncPeerRows();
       },
-      onPeerJoined: (peerId) => {
+      onPeerJoined: (peerId, peerDisplayName) => {
         meshRef.current?.handlePeerJoined(peerId);
+        peerDisplayNamesRef.current.set(peerId, peerDisplayName);
         peerGainsRef.current.set(peerId, 1);
         syncPeerRows();
       },
       onPeerLeft: (peerId) => {
         meshRef.current?.handlePeerLeft(peerId);
         peerGainsRef.current.delete(peerId);
+        peerDisplayNamesRef.current.delete(peerId);
         peerMeterRefs.current.delete(peerId);
         syncPeerRows();
       },
@@ -211,17 +271,34 @@ export default function App() {
     meshRef.current = new WebRtcMesh(signaling, localStreamRef.current);
   };
 
-  const handleConnectClick = async () => {
-    if (signalingRef.current) {
-      signalingRef.current.close();
-      return;
-    }
-    if (isConnectingRef.current) return;
+  const handleHostClick = async () => {
+    if (isConnectingRef.current || signalingRef.current) return;
     isConnectingRef.current = true;
     try {
-      await doConnect();
+      await connect(undefined);
     } finally {
       isConnectingRef.current = false;
+    }
+  };
+
+  const handleJoinClick = async () => {
+    const code = roomCodeInput.trim();
+    if (!code || isConnectingRef.current || signalingRef.current) return;
+    isConnectingRef.current = true;
+    try {
+      await connect(code);
+    } finally {
+      isConnectingRef.current = false;
+    }
+  };
+
+  const handleDisconnectClick = () => {
+    signalingRef.current?.close();
+  };
+
+  const handleCopyRoomCode = () => {
+    if (activeRoomCode) {
+      navigator.clipboard.writeText(activeRoomCode).catch(() => {});
     }
   };
 
@@ -317,127 +394,172 @@ export default function App() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-8">
-      <h1 className="font-display text-4xl font-semibold tracking-wide text-primary [text-shadow:0_0_20px_var(--primary)]">
-        Elden Ring Prox Chat
+      <h1 className="text-center font-display font-semibold">
+        <div className="text-6xl tracking-wide text-primary [text-shadow:0_0_20px_var(--primary)]">
+          Elden Ring
+        </div>
+        <div className="text-3xl tracking-[0.2em] text-red-600 [text-shadow:0_0_20px_#dc2626]">
+          Murder Mystery
+        </div>
       </h1>
 
-      <Card>
-        <CardContent className="flex flex-wrap items-center gap-3 pt-6">
-          <Input
-            className="w-56"
-            placeholder="server url"
-            value={serverUrl}
-            onChange={(e) => setServerUrl(e.target.value)}
-          />
-          <Input
-            className="w-48"
-            type="password"
-            placeholder="room secret (if required)"
-            value={roomSecret}
-            onChange={(e) => setRoomSecret(e.target.value)}
-          />
-          <Input
-            className="w-32"
-            placeholder="player id"
-            value={playerId}
-            onChange={(e) => setPlayerId(e.target.value)}
-          />
-          <Input
-            className="w-32"
-            placeholder="room"
-            value={roomId}
-            onChange={(e) => setRoomId(e.target.value)}
-          />
-          <Select value={selectedMic} onValueChange={setSelectedMic}>
-            <SelectTrigger className="w-56">
-              <SelectValue placeholder="microphone" />
-            </SelectTrigger>
-            <SelectContent>
-              {micDevices.map((device) => (
-                <SelectItem key={device.deviceId} value={device.deviceId}>
-                  {device.label || `Microphone (${device.deviceId.slice(0, 8)})`}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button onClick={handleConnectClick}>{isConnected ? 'Disconnect' : 'Connect'}</Button>
-          <Label htmlFor="mute-switch" className="ml-auto">
-            <Switch id="mute-switch" checked={muted} onCheckedChange={handleMuteChange} />
-            Mute mic
-          </Label>
-        </CardContent>
-      </Card>
-
-      <p className="text-sm text-muted-foreground">{status}</p>
-
-      <div className="flex items-center gap-2 text-sm">
-        <span>My mic:</span>
-        <Meter innerRef={localMeterRef} />
-      </div>
-
-      {peers.length > 0 && (
-        <ul className="space-y-1 font-mono text-sm">
-          {peers.map((peer) => (
-            <li key={peer.id} className="flex items-center gap-2">
-              <span className="text-primary">
-                {peer.id}: {peer.gain.toFixed(2)}
+      {isConnected ? (
+        <>
+          <Card>
+            <CardContent className="flex flex-wrap items-center gap-3 pt-6">
+              <span className="text-sm">
+                Room code: <span className="font-mono text-primary">{activeRoomCode}</span>
               </span>
-              <Meter
-                innerRef={(el) => {
-                  if (el) peerMeterRefs.current.set(peer.id, el);
-                  else peerMeterRefs.current.delete(peer.id);
-                }}
+              <Button variant="secondary" size="sm" onClick={handleCopyRoomCode}>
+                Copy
+              </Button>
+              <Label htmlFor="mute-switch" className="ml-auto">
+                <Switch id="mute-switch" checked={muted} onCheckedChange={handleMuteChange} />
+                Mute mic
+              </Label>
+              <Button variant="destructive" onClick={handleDisconnectClick}>
+                Disconnect
+              </Button>
+            </CardContent>
+          </Card>
+
+          <p className="text-sm text-muted-foreground">{status}</p>
+
+          <div className="flex items-center gap-2 text-sm">
+            <span>My mic:</span>
+            <Meter innerRef={localMeterRef} />
+          </div>
+
+          {peers.length > 0 && (
+            <ul className="space-y-1 font-mono text-sm">
+              {peers.map((peer) => (
+                <li key={peer.id} className="flex items-center gap-2">
+                  <span className="text-primary">
+                    {peer.displayName}: {peer.gain.toFixed(2)}
+                  </span>
+                  <Meter
+                    innerRef={(el) => {
+                      if (el) peerMeterRefs.current.set(peer.id, el);
+                      else peerMeterRefs.current.delete(peer.id);
+                    }}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="font-display text-base tracking-wide text-primary">
+                Manual position (for testing without the game/DLL)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-end gap-3">
+              <Label className="flex-col items-start gap-1">
+                x
+                <Input
+                  className="w-20"
+                  type="number"
+                  value={manualX}
+                  onChange={(e) => setManualX(e.target.value)}
+                />
+              </Label>
+              <Label className="flex-col items-start gap-1">
+                y
+                <Input
+                  className="w-20"
+                  type="number"
+                  value={manualY}
+                  onChange={(e) => setManualY(e.target.value)}
+                />
+              </Label>
+              <Label className="flex-col items-start gap-1">
+                z
+                <Input
+                  className="w-20"
+                  type="number"
+                  value={manualZ}
+                  onChange={(e) => setManualZ(e.target.value)}
+                />
+              </Label>
+              <Button variant="secondary" onClick={handleSendPosition}>
+                Send position
+              </Button>
+            </CardContent>
+          </Card>
+
+          <p className="text-sm text-muted-foreground">{dllStatus}</p>
+          <div
+            ref={logRef}
+            className="h-80 overflow-y-auto rounded-lg border border-border bg-black/60 p-4 font-mono text-sm whitespace-pre-wrap text-amber-200/80 shadow-[inset_0_0_30px_rgba(0,0,0,0.6)]"
+          />
+        </>
+      ) : view === 'settings' ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-display text-base tracking-wide text-primary">Settings</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col items-start gap-4">
+            <Label className="flex-col items-start gap-1">
+              Display name
+              <Input
+                className="w-56"
+                placeholder="display name"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
               />
-            </li>
-          ))}
-        </ul>
-      )}
+            </Label>
+            <Label className="flex-col items-start gap-1">
+              Microphone
+              <Select value={selectedMic} onValueChange={setSelectedMic}>
+                <SelectTrigger className="w-72">
+                  <SelectValue placeholder="microphone" />
+                </SelectTrigger>
+                <SelectContent>
+                  {micDevices.map((device) => (
+                    <SelectItem key={device.deviceId} value={device.deviceId}>
+                      {device.label || `Microphone (${device.deviceId.slice(0, 8)})`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Label>
+            <Button variant="secondary" onClick={() => setView('landing')}>
+              <ArrowLeft /> Back
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="flex flex-col items-center gap-4 pt-6">
+          <p className="text-sm text-muted-foreground">
+            Playing as <span className="text-primary">{displayName || 'no name set'}</span>
+          </p>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-display text-base tracking-wide text-primary">
-            Manual position (for testing without the game/DLL)
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-end gap-3">
-          <Label className="flex-col items-start gap-1">
-            x
-            <Input
-              className="w-20"
-              type="number"
-              value={manualX}
-              onChange={(e) => setManualX(e.target.value)}
-            />
-          </Label>
-          <Label className="flex-col items-start gap-1">
-            y
-            <Input
-              className="w-20"
-              type="number"
-              value={manualY}
-              onChange={(e) => setManualY(e.target.value)}
-            />
-          </Label>
-          <Label className="flex-col items-start gap-1">
-            z
-            <Input
-              className="w-20"
-              type="number"
-              value={manualZ}
-              onChange={(e) => setManualZ(e.target.value)}
-            />
-          </Label>
-          <Button variant="secondary" disabled={!isConnected} onClick={handleSendPosition}>
-            Send position
+          <Button size="lg" className="w-56" onClick={handleHostClick}>
+            Host Room
           </Button>
-        </CardContent>
-      </Card>
 
-      <p className="text-sm text-muted-foreground">{dllStatus}</p>
-      <div
-        ref={logRef}
-        className="h-80 overflow-y-auto rounded-lg border border-border bg-black/60 p-4 font-mono text-sm whitespace-pre-wrap text-amber-200/80 shadow-[inset_0_0_30px_rgba(0,0,0,0.6)]"
-      />
+          <span className="text-sm text-muted-foreground">or</span>
+
+          <div className="flex items-center gap-3">
+            <Input
+              className="w-32"
+              placeholder="room code"
+              value={roomCodeInput}
+              onChange={(e) => setRoomCodeInput(e.target.value.toUpperCase())}
+            />
+            <Button variant="secondary" disabled={!roomCodeInput.trim()} onClick={handleJoinClick}>
+              Join Room
+            </Button>
+          </div>
+
+          <Button variant="ghost" size="sm" onClick={() => setView('settings')}>
+            <SettingsIcon /> Settings
+          </Button>
+
+          <p className="text-sm text-muted-foreground">{status}</p>
+        </div>
+      )}
     </div>
   );
 }

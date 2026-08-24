@@ -1,10 +1,13 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const { WebSocketServer } = require('ws');
 const { computeGain, computeRelativeOffset } = require('./proximity');
 
 const PORT = process.env.PORT || 8080;
-// Set on the VPS so randoms who guess a room name can't join it. Unset (local dev) = no check.
+// Set on the VPS so randoms can't spin up rooms on your server. Unset (local dev) =
+// no check. Only gates hosting now - joining an existing room only requires knowing
+// its (server-generated, effectively unguessable) room code, not this secret too.
 const ROOM_SECRET = process.env.ROOM_SECRET || null;
 const MAX_ID_LENGTH = 64;
 
@@ -16,16 +19,57 @@ function isValidIdString(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_ID_LENGTH;
 }
 
-// roomId -> Map<peerId, { ws, x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY }>
+function resolveDisplayName(value) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length > 0 && trimmed.length <= MAX_ID_LENGTH) {
+      return trimmed;
+    }
+  }
+  return 'Player';
+}
+
+// roomCode -> Map<peerId, { ws, displayName, x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY }>
 const rooms = new Map();
 
-function getRoom(roomId) {
-  let room = rooms.get(roomId);
-  if (!room) {
-    room = new Map();
-    rooms.set(roomId, room);
-  }
-  return room;
+// Excludes visually-ambiguous characters (0/O, 1/I/L) - this code gets read off one
+// screen and typed into another, so a typo should just mean "room not found," not a
+// character that's genuinely unclear which key to press.
+const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const ROOM_CODE_LENGTH = 6;
+
+function generateRoomCode() {
+  let code;
+  do {
+    code = '';
+    for (let i = 0; i < ROOM_CODE_LENGTH; i++) {
+      code += ROOM_CODE_ALPHABET[crypto.randomInt(ROOM_CODE_ALPHABET.length)];
+    }
+  } while (rooms.has(code)); // astronomically unlikely to collide, but cheap to guard
+  return code;
+}
+
+function createRoom() {
+  const code = generateRoomCode();
+  rooms.set(code, new Map());
+  return code;
+}
+
+function makeInitialPeerState(ws, displayName) {
+  return {
+    ws,
+    displayName,
+    x: undefined,
+    y: undefined,
+    z: undefined,
+    mapId: undefined,
+    underground: undefined,
+    yawCos: undefined,
+    yawSin: undefined,
+    blockId: undefined,
+    mapX: undefined,
+    mapY: undefined,
+  };
 }
 
 function send(ws, message) {
@@ -111,55 +155,69 @@ wss.on('connection', (ws) => {
     }
     if (typeof msg !== 'object' || msg === null) return;
 
-    if (msg.type === 'join') {
+    if (msg.type === 'host') {
       if (ROOM_SECRET && msg.secret !== ROOM_SECRET) {
-        console.log('[join] rejected: missing/incorrect secret');
+        console.log('[host] rejected: missing/incorrect secret');
         ws.close(4001, 'invalid secret');
         return;
       }
+      if (msg.id !== undefined && !isValidIdString(msg.id)) return;
+
+      peerId = msg.id || `peer-${Math.random().toString(36).slice(2, 8)}`;
+      const displayName = resolveDisplayName(msg.displayName);
+
+      roomId = createRoom();
+      const room = rooms.get(roomId);
+      room.set(peerId, makeInitialPeerState(ws, displayName));
+
+      send(ws, { type: 'welcome', id: peerId, room: roomId, peers: [] });
+      console.log(`[host] ${peerId} ("${displayName}") created room "${roomId}"`);
+      return;
+    }
+
+    if (msg.type === 'join') {
       if (msg.room !== undefined && !isValidIdString(msg.room)) return;
       if (msg.id !== undefined && !isValidIdString(msg.id)) return;
 
-      roomId = msg.room || 'default';
-      const requestedId = msg.id || `peer-${Math.random().toString(36).slice(2, 8)}`;
-      const room = getRoom(roomId);
+      const targetRoomId = msg.room;
+      const room = targetRoomId ? rooms.get(targetRoomId) : undefined;
+      if (!room) {
+        console.log(`[join] rejected: room "${targetRoomId}" not found`);
+        ws.close(4003, 'room not found');
+        return;
+      }
 
+      const requestedId = msg.id || `peer-${Math.random().toString(36).slice(2, 8)}`;
       // Reject rather than silently overwrite - two peers sharing an id would
       // otherwise have position/volume/signaling for that id randomly cross-routed
       // between their two sockets depending on which joined last.
       if (room.has(requestedId)) {
-        console.log(`[join] rejected: id "${requestedId}" already in use in room "${roomId}"`);
+        console.log(`[join] rejected: id "${requestedId}" already in use in room "${targetRoomId}"`);
         ws.close(4002, 'id already in use');
         return;
       }
 
+      const displayName = resolveDisplayName(msg.displayName);
+      roomId = targetRoomId;
       peerId = requestedId;
-      room.set(peerId, {
-        ws,
-        x: undefined,
-        y: undefined,
-        z: undefined,
-        mapId: undefined,
-        underground: undefined,
-        yawCos: undefined,
-        yawSin: undefined,
-        blockId: undefined,
-        mapX: undefined,
-        mapY: undefined,
-      });
+      room.set(peerId, makeInitialPeerState(ws, displayName));
+
       send(ws, {
         type: 'welcome',
         id: peerId,
         room: roomId,
-        peers: [...room.keys()].filter((id) => id !== peerId),
+        peers: [...room.entries()]
+          .filter(([id]) => id !== peerId)
+          .map(([id, peer]) => ({ id, displayName: peer.displayName })),
       });
-      broadcast(room, { type: 'peer-joined', id: peerId }, ws);
-      console.log(`[join] ${peerId} joined room "${roomId}" (${room.size} total)`);
+      broadcast(room, { type: 'peer-joined', id: peerId, displayName }, ws);
+      console.log(`[join] ${peerId} ("${displayName}") joined room "${roomId}" (${room.size} total)`);
       return;
     }
 
-    if (!roomId || !peerId) return; // must join before doing anything else
-    const room = getRoom(roomId);
+    if (!roomId || !peerId) return; // must host or join before doing anything else
+    const room = rooms.get(roomId);
+    if (!room) return;
 
     if (msg.type === 'position') {
       if (!isFiniteNumber(msg.x) || !isFiniteNumber(msg.y) || !isFiniteNumber(msg.z)) return;

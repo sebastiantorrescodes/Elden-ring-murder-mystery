@@ -5,11 +5,12 @@ interface WelcomeMessage {
   type: 'welcome';
   id: PeerId;
   room: string;
-  peers: PeerId[];
+  peers: { id: PeerId; displayName: string }[];
 }
 interface PeerJoinedMessage {
   type: 'peer-joined';
   id: PeerId;
+  displayName: string;
 }
 interface PeerLeftMessage {
   type: 'peer-left';
@@ -42,14 +43,17 @@ type ServerMessage =
 
 export interface SignalingClientOptions {
   url: string;
-  room: string;
   playerId: string;
-  secret?: string; // required by the server when it's started with ROOM_SECRET set
+  displayName: string;
+  // Room code to join (from server.js's generateRoomCode) - omit to host a new room
+  // instead, in which case the server generates one and returns it in onWelcome.
+  room?: string;
+  secret?: string; // only checked by the server when hosting - see server.js's ROOM_SECRET
   onOpen?: () => void;
   onClose?: () => void;
   onError?: () => void;
   onWelcome?: (msg: WelcomeMessage) => void;
-  onPeerJoined?: (id: PeerId) => void;
+  onPeerJoined?: (id: PeerId, displayName: string) => void;
   onPeerLeft?: (id: PeerId) => void;
   onVolumes?: (volumes: Record<PeerId, PeerVolume>) => void;
   onSignal?: (from: PeerId, data: unknown) => void;
@@ -62,7 +66,11 @@ export class SignalingClient {
     this.ws = new WebSocket(options.url);
 
     this.ws.addEventListener('open', () => {
-      this.send({ type: 'join', room: options.room, id: options.playerId, secret: options.secret });
+      if (options.room) {
+        this.send({ type: 'join', room: options.room, id: options.playerId, displayName: options.displayName });
+      } else {
+        this.send({ type: 'host', id: options.playerId, displayName: options.displayName, secret: options.secret });
+      }
       options.onOpen?.();
     });
 
@@ -86,7 +94,7 @@ export class SignalingClient {
         this.options.onWelcome?.(msg);
         break;
       case 'peer-joined':
-        this.options.onPeerJoined?.(msg.id);
+        this.options.onPeerJoined?.(msg.id, msg.displayName);
         break;
       case 'peer-left':
         this.options.onPeerLeft?.(msg.id);
