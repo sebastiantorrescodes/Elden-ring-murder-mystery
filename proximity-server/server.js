@@ -31,6 +31,10 @@ function resolveDisplayName(value) {
 
 // roomCode -> Map<peerId, { ws, displayName, x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY }>
 const rooms = new Map();
+// roomCode -> peerId of whoever hosted it. Not re-assigned if the host leaves - the
+// room just has no host peer anymore ("Host" tag disappears client-side) rather than
+// promoting someone; keeps this simple until host migration is actually needed.
+const roomHosts = new Map();
 
 // Excludes visually-ambiguous characters (0/O, 1/I/L) - this code gets read off one
 // screen and typed into another, so a typo should just mean "room not found," not a
@@ -169,8 +173,9 @@ wss.on('connection', (ws) => {
       roomId = createRoom();
       const room = rooms.get(roomId);
       room.set(peerId, makeInitialPeerState(ws, displayName));
+      roomHosts.set(roomId, peerId);
 
-      send(ws, { type: 'welcome', id: peerId, room: roomId, peers: [] });
+      send(ws, { type: 'welcome', id: peerId, room: roomId, hostId: peerId, peers: [] });
       console.log(`[host] ${peerId} ("${displayName}") created room "${roomId}"`);
       return;
     }
@@ -206,6 +211,7 @@ wss.on('connection', (ws) => {
         type: 'welcome',
         id: peerId,
         room: roomId,
+        hostId: roomHosts.get(roomId) || null,
         peers: [...room.entries()]
           .filter(([id]) => id !== peerId)
           .map(([id, peer]) => ({ id, displayName: peer.displayName })),
@@ -261,6 +267,7 @@ wss.on('connection', (ws) => {
     console.log(`[leave] ${peerId} left room "${roomId}" (${room.size} remaining)`);
     if (room.size === 0) {
       rooms.delete(roomId);
+      roomHosts.delete(roomId);
     } else {
       broadcast(room, { type: 'peer-left', id: peerId });
     }

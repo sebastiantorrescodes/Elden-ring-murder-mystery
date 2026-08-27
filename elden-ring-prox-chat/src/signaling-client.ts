@@ -5,6 +5,7 @@ interface WelcomeMessage {
   type: 'welcome';
   id: PeerId;
   room: string;
+  hostId: PeerId | null;
   peers: { id: PeerId; displayName: string }[];
 }
 interface PeerJoinedMessage {
