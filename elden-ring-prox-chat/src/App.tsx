@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -10,8 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Settings as SettingsIcon, ArrowLeft } from 'lucide-react';
+import { Settings as SettingsIcon, ArrowLeft, Check, Clipboard } from 'lucide-react';
 import {
   parseDllLine,
   parseAreaLine,
@@ -24,6 +22,7 @@ import {
 } from './dll-protocol';
 import { SignalingClient } from './signaling-client';
 import { WebRtcMesh, type SignalPayload } from './webrtc-mesh';
+import volcanoManorImage from '@/assets/ER_Volcano_Manor_Guest_Hall_Roof_Panorama.webp';
 
 interface PeerRow {
   id: string;
@@ -31,16 +30,12 @@ interface PeerRow {
   gain: number;
 }
 
-// DLL polls every 250ms (dllmain.cpp) - anything past a couple seconds of silence
-// means something's actually wrong (game closed, DLL unloaded, TCP layer still
-// reconnecting), not just poll-cycle jitter.
-const DLL_STALE_THRESHOLD_MS = 2000;
-
 // Only one server in use - not something worth exposing as an editable field.
 const SERVER_URL = 'wss://er-proximity-chat.duckdns.org';
 
 const PLAYER_ID_STORAGE_KEY = 'elden-ring-prox-chat:playerId';
 const DISPLAY_NAME_STORAGE_KEY = 'elden-ring-prox-chat:displayName';
+const MIC_STORAGE_KEY = 'elden-ring-prox-chat:selectedMic';
 
 // Stable per-install identity used for peer routing (server.js's room Map key) - not
 // something the user picks or sees; displayName (below) is what's actually shown.
@@ -62,6 +57,14 @@ function getOrCreatePlayerId(): string {
 function getStoredDisplayName(): string {
   try {
     return localStorage.getItem(DISPLAY_NAME_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function getStoredMic(): string {
+  try {
+    return localStorage.getItem(MIC_STORAGE_KEY) ?? '';
   } catch {
     return '';
   }
@@ -89,16 +92,18 @@ export default function App() {
   // clearing this out first and joining doesn't overwrite it mid-edit.
   const [roomCodeInput, setRoomCodeInput] = useState('');
   const [activeRoomCode, setActiveRoomCode] = useState('');
+  const [hostId, setHostId] = useState<string | null>(null);
   const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedMic, setSelectedMic] = useState('');
-  const [muted, setMuted] = useState(false);
+  const [selectedMic, setSelectedMic] = useState(() => getStoredMic());
+  // True for a brief window right after clicking Save, so the settings view can show
+  // a "Saved" confirmation before returning to the landing view.
+  const [justSaved, setJustSaved] = useState(false);
+  // True for a brief window right after clicking the room code's copy button, so it
+  // can show a checkmark confirming the copy actually happened.
+  const [roomCodeCopied, setRoomCodeCopied] = useState(false);
   const [status, setStatus] = useState('disconnected');
   const [isConnected, setIsConnected] = useState(false);
   const [peers, setPeers] = useState<PeerRow[]>([]);
-  const [dllStatus, setDllStatus] = useState('Waiting for DLL readings on 127.0.0.1:9191…');
-  const [manualX, setManualX] = useState('0');
-  const [manualY, setManualY] = useState('0');
-  const [manualZ, setManualZ] = useState('0');
 
   const signalingRef = useRef<SignalingClient | null>(null);
   const meshRef = useRef<WebRtcMesh | null>(null);
@@ -112,23 +117,9 @@ export default function App() {
   const lastAreaRef = useRef<DllAreaReading | null>(null);
   const lastCameraRef = useRef<DllCameraReading | null>(null);
   const lastBlockRef = useRef<DllBlockReading | null>(null);
-  // Timestamp of the last DLL reading of any kind - the TCP layer already
-  // reconnects on its own (see TcpTestClient.cpp), but nothing previously told the
-  // UI when data had actually stopped arriving; it just kept showing whatever the
-  // last line was, forever. 0 means "never received one yet".
-  const lastReadingAtRef = useRef(0);
-  const wasStaleRef = useRef(false);
 
-  const logRef = useRef<HTMLDivElement | null>(null);
   const localMeterRef = useRef<HTMLDivElement | null>(null);
   const peerMeterRefs = useRef(new Map<string, HTMLDivElement>());
-
-  const appendLog = (line: string) => {
-    const el = logRef.current;
-    if (!el) return;
-    el.textContent += line + '\n';
-    el.scrollTop = el.scrollHeight;
-  };
 
   const syncPeerRows = () => {
     setPeers(
@@ -156,6 +147,44 @@ export default function App() {
     navigator.mediaDevices.addEventListener('devicechange', populateMicList);
     return () => navigator.mediaDevices.removeEventListener('devicechange', populateMicList);
   }, []);
+
+  // Persist Settings fields as they're edited, not just at connect time, so the
+  // choice sticks even if the app is closed from the settings view without ever
+  // hosting/joining a room.
+  useEffect(() => {
+    try {
+      localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, displayName);
+    } catch {
+      // non-fatal - just won't be remembered next launch
+    }
+  }, [displayName]);
+
+  useEffect(() => {
+    if (!selectedMic) return; // avoid clobbering a stored value before devices finish loading
+    try {
+      localStorage.setItem(MIC_STORAGE_KEY, selectedMic);
+    } catch {
+      // non-fatal - just won't be remembered next launch
+    }
+  }, [selectedMic]);
+
+  // displayName/selectedMic are already persisted live by the effects above - Save
+  // just gives an explicit, visible confirmation; heading back is still manual (Back button).
+  useEffect(() => {
+    if (!justSaved) return;
+    const timer = setTimeout(() => setJustSaved(false), 2000);
+    return () => clearTimeout(timer);
+  }, [justSaved]);
+
+  const handleSaveSettings = () => {
+    setJustSaved(true);
+  };
+
+  useEffect(() => {
+    if (!roomCodeCopied) return;
+    const timer = setTimeout(() => setRoomCodeCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [roomCodeCopied]);
 
   // Meter animation loop - bypasses React state/re-renders since this needs to run
   // every frame; the bars are updated by writing directly to the DOM via refs.
@@ -188,6 +217,7 @@ export default function App() {
     peerMeterRefs.current.clear();
     setPeers([]);
     setActiveRoomCode('');
+    setHostId(null);
     setStatus('disconnected');
     setIsConnected(false);
     setView('landing');
@@ -198,11 +228,6 @@ export default function App() {
   const connect = async (room: string | undefined) => {
     const name = displayName.trim() || 'Player';
     setDisplayName(name);
-    try {
-      localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, name);
-    } catch {
-      // non-fatal - just won't be remembered next launch
-    }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -214,11 +239,6 @@ export default function App() {
     } catch (err) {
       console.warn('[mic] getUserMedia failed, continuing without a mic', err);
       localStreamRef.current = null;
-    }
-    if (localStreamRef.current) {
-      for (const track of localStreamRef.current.getAudioTracks()) {
-        track.enabled = !muted;
-      }
     }
 
     const signaling = new SignalingClient({
@@ -233,6 +253,7 @@ export default function App() {
       onError: () => setStatus('connection error'),
       onWelcome: (msg) => {
         setActiveRoomCode(msg.room);
+        setHostId(msg.hostId);
         setStatus(`connected as "${name}" in room ${msg.room}`);
         setIsConnected(true);
         for (const peer of msg.peers) {
@@ -297,45 +318,18 @@ export default function App() {
   };
 
   const handleCopyRoomCode = () => {
-    if (activeRoomCode) {
-      navigator.clipboard.writeText(activeRoomCode).catch(() => {});
-    }
-  };
-
-  const handleSendPosition = () => {
-    if (!signalingRef.current) return;
-    signalingRef.current.sendPosition(
-      Number(manualX) || 0,
-      Number(manualY) || 0,
-      Number(manualZ) || 0,
-    );
-  };
-
-  const handleMuteChange = (checked: boolean) => {
-    setMuted(checked);
-    const stream = localStreamRef.current;
-    if (!stream) return;
-    for (const track of stream.getAudioTracks()) {
-      track.enabled = !checked;
-    }
+    if (!activeRoomCode) return;
+    navigator.clipboard.writeText(activeRoomCode).catch(() => {});
+    setRoomCodeCopied(true);
   };
 
   // Main-process TCP server status + DLL readings - see preload.ts/dll-bridge.d.ts.
   useEffect(() => {
     const unsubscribeStatus = window.dllBridge.onStatus((message) => {
       console.log(message);
-      setDllStatus(message);
-      appendLog(message);
     });
     const unsubscribeReading = window.dllBridge.onReading((line) => {
       console.log('[dll]', line);
-      lastReadingAtRef.current = Date.now();
-      if (wasStaleRef.current) {
-        wasStaleRef.current = false;
-        appendLog('[dll] data resumed');
-      }
-      setDllStatus('Receiving live DLL data:');
-      appendLog(line);
 
       const area = parseAreaLine(line);
       if (area) {
@@ -372,163 +366,146 @@ export default function App() {
       }
     });
 
-    // TCP-level reconnect already happens on its own (TcpTestClient.cpp), but until
-    // it does, this is what actually surfaces "the DLL has gone quiet" in the UI -
-    // otherwise dllStatus just sits on the last thing that happened, indistinguishable
-    // from data still flowing normally.
-    const staleCheckInterval = setInterval(() => {
-      if (lastReadingAtRef.current === 0) return; // never received anything yet
-      const idleMs = Date.now() - lastReadingAtRef.current;
-      if (idleMs > DLL_STALE_THRESHOLD_MS) {
-        wasStaleRef.current = true;
-        setDllStatus(`No DLL data received in ${Math.round(idleMs / 1000)}s - is the game/DLL still running?`);
-      }
-    }, 1000);
-
     return () => {
       unsubscribeStatus();
       unsubscribeReading();
-      clearInterval(staleCheckInterval);
     };
   }, []);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4 p-8">
-      <h1 className="text-center font-display font-semibold">
-        <div className="text-6xl tracking-wide text-primary [text-shadow:0_0_20px_var(--primary)]">
-          Elden Ring
+    <div className="relative flex min-h-screen items-center justify-center p-8">
+    {!isConnected && view === 'landing' && (
+      <Button
+        variant="ghost"
+        size="sm"
+        className="absolute top-6 right-6"
+        onClick={() => setView('settings')}
+      >
+        <SettingsIcon /> Settings
+      </Button>
+    )}
+    {!isConnected && view === 'settings' && (
+      <Button
+        variant="ghost"
+        size="sm"
+        className="absolute top-6 left-6"
+        onClick={() => setView('landing')}
+      >
+        <ArrowLeft /> Back
+      </Button>
+    )}
+    {isConnected && (
+      <>
+        <div className="group absolute top-6 left-6 flex items-center gap-1">
+          <h1 className="font-display text-2xl tracking-wide text-primary">
+            Room: <span className="font-mono">{activeRoomCode}</span>
+          </h1>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="opacity-0 transition-opacity group-hover:opacity-100"
+            onClick={handleCopyRoomCode}
+          >
+            {roomCodeCopied ? <Check /> : <Clipboard />}
+          </Button>
         </div>
-        <div className="text-3xl tracking-[0.2em] text-red-600 [text-shadow:0_0_20px_#dc2626]">
-          Murder Mystery
+        <Button variant="destructive" className="absolute top-6 right-6" onClick={handleDisconnectClick}>
+          Disconnect
+        </Button>
+        <div className="absolute top-24 right-0 flex w-64 flex-col items-center gap-2 pr-6">
+          <h2 className="font-display text-lg tracking-wide text-primary">Choose Map</h2>
+          <img
+            src={volcanoManorImage}
+            alt="Volcano Manor"
+            className="h-80 w-full rounded-lg border border-border object-cover shadow-lg"
+          />
+          <span className="font-display text-sm tracking-wide text-primary">Volcano Manor</span>
         </div>
-      </h1>
+        <div className="absolute top-24 left-0 flex w-64 flex-col gap-3 pl-6">
+          <h2 className="font-display text-lg tracking-wide text-primary">Players</h2>
+          <ul className="flex flex-col gap-3 font-mono text-sm">
+            <li className="flex items-center gap-2">
+              <span>My mic:</span>
+              {playerId === hostId && (
+                <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                  Host
+                </span>
+              )}
+              <Meter innerRef={localMeterRef} />
+            </li>
+            {peers.map((peer) => (
+              <li key={peer.id} className="flex items-center gap-2">
+                <span className="text-primary">
+                  {peer.displayName}: {peer.gain.toFixed(2)}
+                </span>
+                {peer.id === hostId && (
+                  <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                    Host
+                  </span>
+                )}
+                <Meter
+                  innerRef={(el) => {
+                    if (el) peerMeterRefs.current.set(peer.id, el);
+                    else peerMeterRefs.current.delete(peer.id);
+                  }}
+                />
+              </li>
+            ))}
+          </ul>
+        </div>
+      </>
+    )}
+    <div className="mx-auto w-full max-w-3xl space-y-4">
+      {view !== 'settings' && !isConnected && (
+        <h1 className="text-center font-display font-semibold">
+          <div className="text-6xl tracking-wide text-primary [text-shadow:0_0_20px_var(--primary)]">
+            Elden Ring
+          </div>
+          <div className="text-3xl tracking-[0.2em] text-red-600 [text-shadow:0_0_20px_#dc2626]">
+            Murder Mystery
+          </div>
+        </h1>
+      )}
 
-      {isConnected ? (
-        <>
-          <Card>
-            <CardContent className="flex flex-wrap items-center gap-3 pt-6">
-              <span className="text-sm">
-                Room code: <span className="font-mono text-primary">{activeRoomCode}</span>
-              </span>
-              <Button variant="secondary" size="sm" onClick={handleCopyRoomCode}>
-                Copy
-              </Button>
-              <Label htmlFor="mute-switch" className="ml-auto">
-                <Switch id="mute-switch" checked={muted} onCheckedChange={handleMuteChange} />
-                Mute mic
-              </Label>
-              <Button variant="destructive" onClick={handleDisconnectClick}>
-                Disconnect
-              </Button>
-            </CardContent>
-          </Card>
-
-          <p className="text-sm text-muted-foreground">{status}</p>
-
-          <div className="flex items-center gap-2 text-sm">
-            <span>My mic:</span>
-            <Meter innerRef={localMeterRef} />
+      {isConnected ? null : view === 'settings' ? (
+        <div className="flex flex-col items-center gap-4 pt-6">
+          <h2 className="font-display text-4xl tracking-wide text-primary">Settings</h2>
+          <div className="grid gap-1.5">
+            <Label htmlFor="settings-display-name">Display name</Label>
+            <Input
+              id="settings-display-name"
+              className="w-72"
+              placeholder="display name"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="settings-mic">Microphone</Label>
+            <Select value={selectedMic} onValueChange={setSelectedMic}>
+              <SelectTrigger id="settings-mic" className="w-72">
+                <SelectValue placeholder="microphone" />
+              </SelectTrigger>
+              <SelectContent>
+                {micDevices.map((device) => (
+                  <SelectItem key={device.deviceId} value={device.deviceId}>
+                    {device.label || `Microphone (${device.deviceId.slice(0, 8)})`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
-          {peers.length > 0 && (
-            <ul className="space-y-1 font-mono text-sm">
-              {peers.map((peer) => (
-                <li key={peer.id} className="flex items-center gap-2">
-                  <span className="text-primary">
-                    {peer.displayName}: {peer.gain.toFixed(2)}
-                  </span>
-                  <Meter
-                    innerRef={(el) => {
-                      if (el) peerMeterRefs.current.set(peer.id, el);
-                      else peerMeterRefs.current.delete(peer.id);
-                    }}
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="font-display text-base tracking-wide text-primary">
-                Manual position (for testing without the game/DLL)
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-wrap items-end gap-3">
-              <Label className="flex-col items-start gap-1">
-                x
-                <Input
-                  className="w-20"
-                  type="number"
-                  value={manualX}
-                  onChange={(e) => setManualX(e.target.value)}
-                />
-              </Label>
-              <Label className="flex-col items-start gap-1">
-                y
-                <Input
-                  className="w-20"
-                  type="number"
-                  value={manualY}
-                  onChange={(e) => setManualY(e.target.value)}
-                />
-              </Label>
-              <Label className="flex-col items-start gap-1">
-                z
-                <Input
-                  className="w-20"
-                  type="number"
-                  value={manualZ}
-                  onChange={(e) => setManualZ(e.target.value)}
-                />
-              </Label>
-              <Button variant="secondary" onClick={handleSendPosition}>
-                Send position
-              </Button>
-            </CardContent>
-          </Card>
-
-          <p className="text-sm text-muted-foreground">{dllStatus}</p>
-          <div
-            ref={logRef}
-            className="h-80 overflow-y-auto rounded-lg border border-border bg-black/60 p-4 font-mono text-sm whitespace-pre-wrap text-amber-200/80 shadow-[inset_0_0_30px_rgba(0,0,0,0.6)]"
-          />
-        </>
-      ) : view === 'settings' ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="font-display text-base tracking-wide text-primary">Settings</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col items-start gap-4">
-            <Label className="flex-col items-start gap-1">
-              Display name
-              <Input
-                className="w-56"
-                placeholder="display name"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-              />
-            </Label>
-            <Label className="flex-col items-start gap-1">
-              Microphone
-              <Select value={selectedMic} onValueChange={setSelectedMic}>
-                <SelectTrigger className="w-72">
-                  <SelectValue placeholder="microphone" />
-                </SelectTrigger>
-                <SelectContent>
-                  {micDevices.map((device) => (
-                    <SelectItem key={device.deviceId} value={device.deviceId}>
-                      {device.label || `Microphone (${device.deviceId.slice(0, 8)})`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Label>
-            <Button variant="secondary" onClick={() => setView('landing')}>
-              <ArrowLeft /> Back
-            </Button>
-          </CardContent>
-        </Card>
+          <Button className="w-72" disabled={justSaved} onClick={handleSaveSettings}>
+            {justSaved ? (
+              <>
+                <Check /> Saved
+              </>
+            ) : (
+              'Save'
+            )}
+          </Button>
+        </div>
       ) : (
         <div className="flex flex-col items-center gap-4 pt-6">
           <p className="text-sm text-muted-foreground">
@@ -553,13 +530,10 @@ export default function App() {
             </Button>
           </div>
 
-          <Button variant="ghost" size="sm" onClick={() => setView('settings')}>
-            <SettingsIcon /> Settings
-          </Button>
-
-          <p className="text-sm text-muted-foreground">{status}</p>
+          {status !== 'disconnected' && <p className="text-sm text-muted-foreground">{status}</p>}
         </div>
       )}
+    </div>
     </div>
   );
 }
