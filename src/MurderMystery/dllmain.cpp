@@ -9,8 +9,6 @@
 #include <iomanip>
 #include <cstdlib>
 
-// hello i am yerq
-
 // ============================================================
 // Murder Mystery v0.1
 // Elden Ring 1.16.2
@@ -41,6 +39,7 @@ namespace MM
 
     constexpr int32_t SPEFFECT_ROUND_CLEANUP_REQUEST = 500050;
     constexpr int32_t SPEFFECT_TALISMAN_BREAK_REQUEST = 500051;
+    constexpr int32_t SPEFFECT_TALISMAN_SHATTER_REQUEST = 500054;
 
     // veil talisman
 
@@ -51,7 +50,7 @@ namespace MM
 
     constexpr int32_t SPEFFECT_CONCEALING_VEIL = 360100;
     constexpr int32_t SPEFFECT_TALISMAN_SHATTER = 360101;
-    constexpr int32_t SPEFFECT_STEALTH = 8001;
+    constexpr int32_t SPEFFECT_STEALTH = 8001; // unused rn
 
     // Bubbletear talisman
 
@@ -76,6 +75,19 @@ namespace MM
     constexpr int32_t SPEFFECT_CRUCIBLE_FEATHER = 340700;
     constexpr int32_t SPEFFECT_CRUCIBLE_FEATHER_CYCLE = 340701;
 
+    // Alloyed Fist talisman
+
+    constexpr uint32_t ALLOYED_FIST =
+        0x20000000u | 1250u;
+
+    constexpr int32_t SPEFFECT_EQUIP_ALLOYED_FIST = 500025;
+
+    constexpr int32_t SPEFFECT_ALLOYED_FIST = 312510;
+
+    constexpr int32_t SPEFFECT_ALLOYED_FIST_HIT = 312511;
+    constexpr int32_t SPEFFECT_ALLOYED_FIST_ARMED = 312512;
+    constexpr int32_t SPEFFECT_ALLOYED_FIST_CONSUME = 312513;
+
     // kill talisman
 
     constexpr uint32_t MARK_OF_GREED_ITEM =
@@ -93,6 +105,11 @@ namespace MM
 
     // Structure containing tailDataIdx used by equipGear
     constexpr uintptr_t EQUIP_INVENTORY_DATA_OFFSET = 0x408;
+
+    // blank talisman
+
+    constexpr uint32_t NULL_MM_TALISMAN =
+        0x20000000u | 6700u;
 
     // --------------------------------------------------------
     // Goods equipment slots
@@ -139,6 +156,31 @@ namespace MM
     constexpr int32_t SPEFFECT_SHERIFF = 500001;
     constexpr int32_t SPEFFECT_INNOCENT = 500002;
     constexpr int32_t SPEFFECT_BOOTSTRAP = 500003;
+
+    // --------------------------------------------------------
+    // Sheriff punishment logic
+    // --------------------------------------------------------
+
+    int sheriffWrongKills = 0;
+
+    constexpr int MAX_MM_PLAYERS = 16;
+
+    bool sheriffTrackedAlive[MAX_MM_PLAYERS]{};
+    bool sheriffTrackedInitialized[MAX_MM_PLAYERS]{};
+
+    // --------------------------------------------------------
+
+    constexpr int32_t
+        SPEFFECT_SHERIFF_PICKUP_REQUEST =
+        500062;
+
+    constexpr int32_t
+        SPEFFECT_SHERIFF_ATTACK_TAGGER =
+        500063;
+
+    constexpr int32_t
+        SPEFFECT_SHERIFF_HIT_MARKER =
+        500060;
 
     // ChrAsm / active weapon selection inside PlayerGameData.
     constexpr uintptr_t ARM_STYLE_OFFSET = 0x324;
@@ -203,10 +245,10 @@ namespace MM
     bool ClearRoleMagic();
     bool UnlockAllGestures();
 
-    bool UnequipGoodsSlot(int32_t slot);
-    bool SetSheriffMagic();
-    bool ClearRoleMagic();
-    bool UnlockAllGestures();
+    bool RemoveLocalTalismanInventory();
+
+    bool RemoveAllInventoryCopies(
+        int32_t itemId);
 
     // --------------------------------------------------------
     // Globals
@@ -1079,12 +1121,47 @@ namespace MM
         }
     }
 
+    bool WritePlayerHp(
+        uintptr_t chrIns,
+        int newHp)
+    {
+        if (!chrIns)
+            return false;
+
+        __try
+        {
+            const uintptr_t chrData =
+                *reinterpret_cast<uintptr_t*>(
+                    chrIns + 0x190);
+
+            if (!chrData)
+                return false;
+
+            const uintptr_t hpBase =
+                *reinterpret_cast<uintptr_t*>(
+                    chrData);
+
+            if (!hpBase)
+                return false;
+
+            *reinterpret_cast<int*>(
+                hpBase + 0x138) =
+                newHp;
+
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
     void DumpPlayerStates()
     {
         Log("");
         Log("========== PLAYER STATE ==========");
 
-        for (int slot = 0; slot < 6; ++slot)
+        for (int slot = 0; slot < MAX_MM_PLAYERS; ++slot)
         {
             PlayerState player{};
 
@@ -1144,6 +1221,57 @@ namespace MM
 
             // Safety limit in case a bad pointer creates a loop.
             for (int i = 0; effect && i < 2048; ++i)
+            {
+                const int32_t id =
+                    *reinterpret_cast<int32_t*>(
+                        effect + 0x08);
+
+                if (id == wantedId)
+                    return true;
+
+                const int32_t hasNext =
+                    *reinterpret_cast<int32_t*>(
+                        effect + 0x30);
+
+                if (hasNext == 0)
+                    break;
+
+                effect =
+                    *reinterpret_cast<uintptr_t*>(
+                        effect + 0x30);
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+
+        return false;
+    }
+
+    bool ChrInsHasSpEffect(
+        uintptr_t chrIns,
+        int32_t wantedId)
+    {
+        if (!chrIns)
+            return false;
+
+        __try
+        {
+            const uintptr_t specialEffect =
+                *reinterpret_cast<uintptr_t*>(
+                    chrIns + 0x178);
+
+            if (!specialEffect)
+                return false;
+
+            uintptr_t effect =
+                *reinterpret_cast<uintptr_t*>(
+                    specialEffect + 0x08);
+
+            for (int i = 0;
+                effect && i < 2048;
+                ++i)
             {
                 const int32_t id =
                     *reinterpret_cast<int32_t*>(
@@ -1678,7 +1806,8 @@ namespace MM
 
             if (equipped == CONCEALING_VEIL ||
                 equipped == PEARLDRAKE_TALISMAN ||
-                equipped == CRUCIBLE_FEATHER_TALISMAN)
+                equipped == CRUCIBLE_FEATHER_TALISMAN ||
+                equipped == ALLOYED_FIST)
             {
                 return true;
             }
@@ -1706,7 +1835,8 @@ namespace MM
 
             if (equipped == CONCEALING_VEIL ||
                 equipped == PEARLDRAKE_TALISMAN ||
-                equipped == CRUCIBLE_FEATHER_TALISMAN)
+                equipped == CRUCIBLE_FEATHER_TALISMAN ||
+                equipped == ALLOYED_FIST)
             {
                 UnequipGearSlot(slot);
                 found = true;
@@ -2215,6 +2345,89 @@ namespace MM
             g_equipGearAddress);
     }
 
+    // null talisman -------------------------------------------
+
+    bool GiveNullMMTalisman()
+    {
+        if (GetItemIndex(
+            static_cast<int32_t>(NULL_MM_TALISMAN)) >= 0)
+        {
+            return true;
+        }
+
+        const uint32_t item =
+            NULL_MM_TALISMAN;
+
+        if (!GiveItemBatch(&item, 1))
+        {
+            Log("[ERROR] Failed to grant MM Null Talisman.");
+            return false;
+        }
+
+        Log("[TALISMAN] MM Null Talisman granted.");
+
+        return true;
+    }
+
+    bool FlushMMTalismanWithNull()
+    {
+        // --------------------------------------------------------
+        // 1. Null accessory must physically exist for
+        //    Native GetInventoryId / EquipItem to accept it.
+        // --------------------------------------------------------
+
+        if (!GiveNullMMTalisman())
+            return false;
+
+        // GiveItem may not be reflected in inventory literally
+        // instantaneously, so give the game a tiny opportunity
+        // to process it.
+        Sleep(20);
+
+        // --------------------------------------------------------
+        // 2. Perform a VALID native accessory replacement.
+        //
+        // This is the important network-visible operation:
+        //
+        // Real MM talisman -> Null talisman
+        // --------------------------------------------------------
+
+        if (!EquipItemNativeByItemId(
+            SLOT_TALISMAN_1,
+            static_cast<int32_t>(NULL_MM_TALISMAN)))
+        {
+            Log(
+                "[ERROR] Failed to native-equip MM Null Talisman.");
+
+            return false;
+        }
+
+        Log(
+            "[TALISMAN] Active MM talisman replaced "
+            "with Null Talisman.");
+
+        // --------------------------------------------------------
+        // IMPORTANT:
+        // Give Seamless time to serialize the valid native 6700 replacement talisman
+        // --------------------------------------------------------
+        Sleep(250); // 250
+
+        RemoveLocalTalismanInventory();
+
+        UnequipGearSlot(
+            SLOT_TALISMAN_1);
+
+        RemoveAllInventoryCopies(
+            static_cast<int32_t>(NULL_MM_TALISMAN));
+
+        Log(
+            "[TALISMAN] Null flush complete.");
+
+        return true;
+    }
+
+    // null talisman -------------------------------------------
+
     bool RemoveInventoryItemByIndex(
         int32_t index)
     {
@@ -2308,12 +2521,16 @@ namespace MM
                 static_cast<int32_t>(PEARLDRAKE_TALISMAN)) >= 0
             ||
             GetItemIndex(
-                static_cast<int32_t>(CRUCIBLE_FEATHER_TALISMAN)) >= 0;
+                static_cast<int32_t>(CRUCIBLE_FEATHER_TALISMAN)) >= 0
+            ||
+            GetItemIndex(
+                static_cast<int32_t>(ALLOYED_FIST)) >= 0;
     }
 
     bool RemoveLocalTalismanInventory()
     {
-        // Callers must unequip MM talismans before reaching here.
+        // Callers must ensure MM talismans are no longer
+        // occupying an equipment slot before reaching here.
 
         const bool hadConcealing =
             GetItemIndex(
@@ -2330,6 +2547,11 @@ namespace MM
                 static_cast<int32_t>(
                     CRUCIBLE_FEATHER_TALISMAN)) >= 0;
 
+        const bool hadAlloyedFist =
+            GetItemIndex(
+                static_cast<int32_t>(
+                    ALLOYED_FIST)) >= 0;
+
         RemoveAllInventoryCopies(
             static_cast<int32_t>(
                 CONCEALING_VEIL));
@@ -2342,9 +2564,14 @@ namespace MM
             static_cast<int32_t>(
                 CRUCIBLE_FEATHER_TALISMAN));
 
+        RemoveAllInventoryCopies(
+            static_cast<int32_t>(
+                ALLOYED_FIST));
+
         if (hadConcealing ||
             hadPearldrake ||
-            hadCrucibleFeather)
+            hadCrucibleFeather ||
+            hadAlloyedFist)
         {
             Log(
                 "[TALISMAN] MM talisman inventory cleared.");
@@ -2380,9 +2607,9 @@ namespace MM
         // EMEVD SetSpEffect() has been multiplayer-tested and does.
         // --------------------------------------------------------
 
-        SetEventFlag(
-            16009977,
-            true);
+        ApplySpEffectToChrIns(
+            player,
+            SPEFFECT_TALISMAN_SHATTER_REQUEST);
 
         // --------------------------------------------------------
         // Mechanical effects
@@ -2416,6 +2643,22 @@ namespace MM
             player,
             SPEFFECT_EQUIP_CRUCIBLE_FEATHER);
 
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_ALLOYED_FIST);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_ALLOYED_FIST_ARMED);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_ALLOYED_FIST_CONSUME);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_EQUIP_ALLOYED_FIST);
+
         // --------------------------------------------------------
         // Equipment first.
         //
@@ -2423,13 +2666,70 @@ namespace MM
         // it is still equipped.
         // --------------------------------------------------------
 
-        UnequipMMTalismanEverywhere();
+        if (!FlushMMTalismanWithNull())
+        {
+            Log(
+                "[ERROR] Null talisman flush failed; "
+                "falling back to local cleanup.");
+
+            UnequipMMTalismanEverywhere();
+            RemoveLocalTalismanInventory();
+        }
+
+        return true;
+    }
+
+    bool ConsumeAlloyedFist()
+    {
+        const uintptr_t player =
+            GetLocalPlayerIns();
+
+        if (!player)
+            return false;
+
+        if (GetItemIndex(
+            static_cast<int32_t>(ALLOYED_FIST)) < 0)
+        {
+            return false;
+        }
+
+        Log("[ALLOYED FIST] Successful hit -> consuming talisman.");
 
         // --------------------------------------------------------
-        // Actual inventory destruction.
+        // NO generic talisman shatter VFX here.
+        //
+        // 312511 already provides Alloyed Fist's impact SFX/VFX.
         // --------------------------------------------------------
 
-        RemoveLocalTalismanInventory();
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_ALLOYED_FIST);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_ALLOYED_FIST_ARMED);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_ALLOYED_FIST_CONSUME);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_EQUIP_ALLOYED_FIST);
+
+        // Perform the same network-visible valid accessory
+        // replacement used by the other consumed talismans.
+        if (!FlushMMTalismanWithNull())
+        {
+            Log(
+                "[ERROR] Alloyed Fist null flush failed; "
+                "falling back to local cleanup.");
+
+            UnequipMMTalismanEverywhere();
+            RemoveLocalTalismanInventory();
+        }
+
+        Log("[ALLOYED FIST] Consumed.");
 
         return true;
     }
@@ -2493,6 +2793,26 @@ namespace MM
         RemoveSpEffectFromChrIns(
             player,
             SPEFFECT_EQUIP_CRUCIBLE_FEATHER);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_ALLOYED_FIST);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_ALLOYED_FIST_ARMED);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_ALLOYED_FIST_CONSUME);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_EQUIP_ALLOYED_FIST);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_SHERIFF_ATTACK_TAGGER);
 
         ClearGreed();
 
@@ -3339,7 +3659,10 @@ namespace MM
 
     bool ApplyMurdererLoadout()
     {
-        UnequipMMTalismanEverywhere();
+        if (HasLocalTalisman())
+        {
+            BreakLocalTalisman();
+        }
 
         ClearRoleMagic();
 
@@ -3381,7 +3704,10 @@ namespace MM
 
     bool ApplySheriffLoadout()
     {
-        UnequipMMTalismanEverywhere();
+        if (HasLocalTalisman())
+        {
+            BreakLocalTalisman();
+        }
 
         UnequipGoodsSlot(
             SLOT_QUICK_ITEM_1);
@@ -3406,6 +3732,18 @@ namespace MM
         {
             Log("[ROLE] Sheriff loadout not ready; will retry.");
             return false;
+        }
+
+        const uintptr_t player =
+            GetLocalPlayerIns();
+
+        if (player &&
+            !HasSpEffect(
+                SPEFFECT_SHERIFF_ATTACK_TAGGER))
+        {
+            ApplySpEffectToChrIns(
+                player,
+                SPEFFECT_SHERIFF_ATTACK_TAGGER);
         }
 
         Log("[ROLE] Sheriff loadout applied.");
@@ -3455,6 +3793,38 @@ namespace MM
 
         const Role oldRole =
             GetCurrentRole();
+
+        // --------------------------------------------------------
+        // New Sheriff starts with a fresh punishment state.
+        // --------------------------------------------------------
+
+        if (role == Role::Sheriff &&
+            oldRole != Role::Sheriff)
+        {
+            sheriffWrongKills = 0;
+
+            for (int i = 0; i < MAX_MM_PLAYERS; ++i)
+            {
+                sheriffTrackedAlive[i] = false;
+                sheriffTrackedInitialized[i] = false;
+            }
+
+            Log(
+                "[SHERIFF] New Sheriff -> "
+                "wrong-kill tracking reset.");
+        }
+
+        // --------------------------------------------------------
+        // Leaving Sheriff: remove Sheriff-only attack tagging.
+        // --------------------------------------------------------
+
+        if (oldRole == Role::Sheriff &&
+            role != Role::Sheriff)
+        {
+            RemoveSpEffectFromChrIns(
+                player,
+                SPEFFECT_SHERIFF_ATTACK_TAGGER);
+        }
 
         // --------------------------------------------------------
         // Leaving Innocent while carrying a talisman.
@@ -3805,6 +4175,7 @@ namespace MM
         bool pearldrakeBreakRequested = false;
         bool concealingTracking = false;
         bool mmTalismanWasEquipped = false;
+        bool alloyedHitPulseHandled = false;
 
         while (g_running)
         {
@@ -4039,11 +4410,21 @@ namespace MM
 
                 if (player)
                 {
+                    // If Concealing Veil is still active here,
+                    // this was an EARLY uncrouch break, not natural expiry.
+                    if (concealingTracking &&
+                        HasSpEffect(
+                            SPEFFECT_CONCEALING_VEIL))
+                    {
+                        concealingTracking = false;
+
+                        Log(
+                            "[CONCEALING] Early cancel acknowledged "
+                            "before generic talisman break.");
+                    }
+
                     BreakLocalTalisman();
 
-                    // The old talisman is intentionally gone.
-                    // Do not let the manual-unequip detector treat
-                    // the incoming replacement as an unequipped old item.
                     mmTalismanWasEquipped = false;
 
                     RemoveSpEffectFromChrIns(
@@ -4059,15 +4440,9 @@ namespace MM
                 HasSpEffect(
                     SPEFFECT_CONCEALING_VEIL);
 
-            const bool isStealthed =
-                HasSpEffect(
-                    SPEFFECT_STEALTH);
-
             if (!concealingTracking)
             {
-                // It only becomes "armed" once the player
-                // actually activates it while crouched.
-                if (hasConcealing && isStealthed)
+                if (hasConcealing)
                 {
                     concealingTracking = true;
 
@@ -4077,29 +4452,29 @@ namespace MM
             }
             else
             {
-                // Player stood up before the 7-second effect expired.
-                if (hasConcealing && !isStealthed)
+                // Natural duration expiry only.
+                //
+                // Early uncrouch is handled by EMEVD 16009987
+                // through 500051 -> BreakLocalTalisman().
+                if (!hasConcealing)
                 {
-                    BreakLocalTalisman();
+                    const uintptr_t player =
+                        GetLocalPlayerIns();
 
-                    concealingTracking = false;
+                    if (player)
+                    {
+                        ApplySpEffectToChrIns(
+                            player,
+                            SPEFFECT_TALISMAN_SHATTER_REQUEST);
+                    }
 
-                    Log(
-                        "[CONCEALING] Early uncrouch -> broken.");
-                }
-                // Natural duration expiry.
-                else if (!hasConcealing)
-                {
-                    // 360100 expired naturally.
-                    // Request the same network-visible shatter VFX
-                    // used by every other break path.
-                    SetEventFlag(
-                        16009977,
-                        true);
+                    if (!FlushMMTalismanWithNull())
+                    {
+                        UnequipMMTalismanEverywhere();
+                        RemoveLocalTalismanInventory();
+                    }
 
-                    UnequipMMTalismanEverywhere();
-                    RemoveLocalTalismanInventory();
-
+                    mmTalismanWasEquipped = false;
                     concealingTracking = false;
 
                     Log(
@@ -4129,10 +4504,74 @@ namespace MM
                 }
             }
 
+            bool alloyedHitPulse = false;
+
+            if (GetEventFlag(
+                16009886,
+                alloyedHitPulse))
+            {
+                if (alloyedHitPulse)
+                {
+                    if (!alloyedHitPulseHandled &&
+                        HasSpEffect(
+                            SPEFFECT_ALLOYED_FIST_ARMED) &&
+                        GetItemIndex(
+                            static_cast<int32_t>(
+                                ALLOYED_FIST)) >= 0)
+                    {
+                        Log(
+                            "[ALLOYED FIST] Network hit confirmed.");
+
+                        // Give the victim's damage/HKS reaction time to finish
+                        // before destroying the attacker's armed talisman state.
+                        Sleep(150);
+
+                        ConsumeAlloyedFist();
+
+                        mmTalismanWasEquipped = false;
+                    }
+
+                    alloyedHitPulseHandled = true;
+                }
+                else
+                {
+                    alloyedHitPulseHandled = false;
+                }
+            }
+
+            if (HasSpEffect(
+                SPEFFECT_SHERIFF_PICKUP_REQUEST))
+            {
+                const uintptr_t player =
+                    GetLocalPlayerIns();
+
+                if (player)
+                {
+                    RemoveSpEffectFromChrIns(
+                        player,
+                        SPEFFECT_SHERIFF_PICKUP_REQUEST);
+
+                    if (GetCurrentRole() ==
+                        Role::Innocent)
+                    {
+                        Log(
+                            "[SHERIFF] Innocent claimed "
+                            "dropped Sheriff kit.");
+
+                        SetLocalRole(
+                            Role::Sheriff);
+                    }
+                }
+            }
+
             if (GetAsyncKeyState(VK_F1) & 1)
             {
-                SetEventFlag(16009977, true);
-                Log("[TEST] Requested EMEVD 360101.");
+                SetEventFlag(
+                    16009984,
+                    true);
+
+                Log(
+                    "[TEST] F1 -> Sheriff kit pickup spawned.");
             }
 
             if (GetAsyncKeyState(VK_F2) & 1)
@@ -4305,6 +4744,22 @@ namespace MM
                                 "native auto-equipped to slot 1.");
                         }
                     }
+
+                    if (HasSpEffect(SPEFFECT_EQUIP_ALLOYED_FIST))
+                    {
+                        if (EquipItemNativeByItemId(
+                            SLOT_TALISMAN_1,
+                            static_cast<int32_t>(ALLOYED_FIST)))
+                        {
+                            RemoveSpEffectFromChrIns(
+                                player,
+                                SPEFFECT_EQUIP_ALLOYED_FIST);
+
+                            Log(
+                                "[TALISMAN] Alloyed Fist "
+                                "native auto-equipped to slot 1.");
+                        }
+                    }
                 }
             }
 
@@ -4319,7 +4774,8 @@ namespace MM
                 const bool autoEquipPending =
                     HasSpEffect(SPEFFECT_EQUIP_CONCEALING) ||
                     HasSpEffect(SPEFFECT_EQUIP_PEARLDRAKE) ||
-                    HasSpEffect(SPEFFECT_EQUIP_CRUCIBLE_FEATHER);
+                    HasSpEffect(SPEFFECT_EQUIP_CRUCIBLE_FEATHER) ||
+                    HasSpEffect(SPEFFECT_EQUIP_ALLOYED_FIST);
 
                 if (!ownsMMTalisman)
                 {
@@ -4336,9 +4792,54 @@ namespace MM
                     Log(
                         "[TALISMAN] Manual unequip detected.");
 
-                    BreakLocalTalisman();
+                    const uintptr_t player =
+                        GetLocalPlayerIns();
+
+                    if (player)
+                    {
+                        RemoveSpEffectFromChrIns(
+                            player,
+                            SPEFFECT_CONCEALING_VEIL);
+
+                        RemoveSpEffectFromChrIns(
+                            player,
+                            SPEFFECT_PEARLDRAKE);
+
+                        RemoveSpEffectFromChrIns(
+                            player,
+                            SPEFFECT_CRUCIBLE_FEATHER);
+
+                        RemoveSpEffectFromChrIns(
+                            player,
+                            SPEFFECT_CRUCIBLE_FEATHER_CYCLE);
+
+                        RemoveSpEffectFromChrIns(
+                            player,
+                            SPEFFECT_ALLOYED_FIST);
+
+                        RemoveSpEffectFromChrIns(
+                            player,
+                            SPEFFECT_ALLOYED_FIST_ARMED);
+
+                        RemoveSpEffectFromChrIns(
+                            player,
+                            SPEFFECT_ALLOYED_FIST_CONSUME);
+
+                        RemoveSpEffectFromChrIns(
+                            player,
+                            SPEFFECT_EQUIP_ALLOYED_FIST);
+                    }
+
+                    ApplySpEffectToChrIns(
+                        player,
+                        SPEFFECT_TALISMAN_SHATTER_REQUEST);
+
+                    RemoveLocalTalismanInventory();
 
                     mmTalismanWasEquipped = false;
+
+                    Log(
+                        "[TALISMAN] Manual unequip consumed normally.");
                 }
             }
             else
@@ -4369,8 +4870,19 @@ namespace MM
                     {
                         Log("[PLAYER] Local player DIED.");
 
-                        // TEMPORARY:
-                        // For testing cleanup between lives.
+                        if (currentRole == Role::Sheriff)
+                        {
+                            Log(
+                                "[SHERIFF] Sheriff died -> "
+                                "requesting dropped kit.");
+
+                            SetEventFlag(
+                                16009980,
+                                true);
+                        }
+
+                        // TEMPORARY cleanup behavior can remain for now
+                        // if you still need it.
                         RequestRoundCleanup();
                     }
 
@@ -4444,6 +4956,100 @@ namespace MM
                     pearldrakeTracking = false;
                     pearldrakeBreakRequested = false;
                     pearldrakeLastHp = -1;
+                }
+            }
+
+            if (currentRole == Role::Sheriff)
+            {
+                for (int slot = 1; slot < MAX_MM_PLAYERS; ++slot)
+                {
+                    PlayerState target{};
+
+                    if (!TryReadPlayerSlot(slot, target))
+                    {
+                        sheriffTrackedInitialized[slot] = false;
+                        continue;
+                    }
+
+                    if (!sheriffTrackedInitialized[slot])
+                    {
+                        sheriffTrackedAlive[slot] =
+                            target.alive;
+
+                        sheriffTrackedInitialized[slot] =
+                            true;
+
+                        continue;
+                    }
+
+                    const bool justDied =
+                        sheriffTrackedAlive[slot] &&
+                        !target.alive;
+
+                    if (justDied)
+                    {
+                        const bool wasInnocent =
+                            ChrInsHasSpEffect(
+                                target.chrIns,
+                                SPEFFECT_INNOCENT);
+
+                        const bool sheriffHit =
+                            ChrInsHasSpEffect(
+                                target.chrIns,
+                                500060);
+
+                        if (wasInnocent &&
+                            sheriffHit)
+                        {
+                            ++sheriffWrongKills;
+
+                            Log(
+                                "[SHERIFF] Innocent kill detected. "
+                                "Wrong kills=" +
+                                std::to_string(
+                                    sheriffWrongKills));
+
+                            if (sheriffWrongKills == 1)
+                            {
+                                // First mistake:
+                                // cap Sheriff at 50% max HP.
+                                PlayerState sheriff{};
+
+                                if (TryReadPlayerSlot(
+                                    0,
+                                    sheriff))
+                                {
+                                    const int halfHp =
+                                        (sheriff.maxHp + 1) / 2;
+
+                                    // Never heal Sheriff by applying
+                                    // the punishment.
+                                    if (sheriff.hp > halfHp)
+                                    {
+                                        if (WritePlayerHp(
+                                            sheriff.chrIns,
+                                            halfHp))
+                                        {
+                                            Log(
+                                                "[SHERIFF] First wrong kill -> "
+                                                "HP reduced to 50%.");
+                                        }
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                // Second wrong Innocent kill:
+                                // use proven EMEVD death path.
+                                SetEventFlag(
+                                    16009979,
+                                    true);
+                            }
+                        }
+                    }
+
+                    sheriffTrackedAlive[slot] =
+                        target.alive;
                 }
             }
 
