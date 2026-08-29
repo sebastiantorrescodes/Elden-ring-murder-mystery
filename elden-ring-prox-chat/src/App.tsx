@@ -364,6 +364,7 @@ export default function App() {
           lastBlockRef.current?.blockId,
           lastAreaRef.current?.mapX,
           lastAreaRef.current?.mapY,
+          reading.hp,
         );
       }
     });

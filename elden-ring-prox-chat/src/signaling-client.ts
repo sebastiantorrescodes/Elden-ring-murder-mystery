@@ -115,12 +115,14 @@ export class SignalingClient {
     }
   }
 
-  // mapId/underground/yawCos/yawSin/blockId/mapX/mapY are all optional: an older
+  // mapId/underground/yawCos/yawSin/blockId/mapX/mapY/hp are all optional: an older
   // client or the manual test controls that omit them are treated by the server as
   // "unknown" rather than being penalized (area/block: trust distance; facing: no
-  // directional cue). blockId is what the server actually gates proximity on -
-  // mapId/underground/mapX/mapY are kept for other potential uses but don't drive
-  // that decision (yet, for mapX/mapY - see the Location comment in WorldChrMan.h).
+  // directional cue; hp: not muted). blockId is what the server actually gates
+  // proximity on - mapId/underground/mapX/mapY are kept for other potential uses but
+  // don't drive that decision (yet, for mapX/mapY - see the Location comment in
+  // WorldChrMan.h). hp === 0 mutes this peer's mic for everyone, regardless of
+  // distance - see proximity.js's computeGain.
   sendPosition(
     x: number,
     y: number,
@@ -132,8 +134,9 @@ export class SignalingClient {
     blockId?: number,
     mapX?: number,
     mapY?: number,
+    hp?: number,
   ) {
-    this.send({ type: 'position', x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY });
+    this.send({ type: 'position', x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY, hp });
   }
 
   sendSignal(to: PeerId, data: unknown) {

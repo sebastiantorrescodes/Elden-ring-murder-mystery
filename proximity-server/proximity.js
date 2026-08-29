@@ -19,17 +19,10 @@ function hasMapPosition(peer) {
   );
 }
 
-// z is scaled down before entering the Euclidean sum so it counts for less than an
-// equivalent gap in mapX/mapY - a unit of z separation contributes Z_WEIGHT^2 as
-// much to the total (squared) distance as a unit of mapX/mapY separation. Opposite
-// of an earlier experiment that weighted z up instead (see git history) - untested
-// against real gameplay, tune to taste once you've felt it in-game.
-const Z_WEIGHT = 0.5;
-
 function mapDistance(a, b) {
   const dx = a.mapX - b.mapX;
   const dy = a.mapY - b.mapY;
-  const dz = (a.z - b.z) * Z_WEIGHT;
+  const dz = a.z - b.z;
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
@@ -45,6 +38,11 @@ function distanceGain(distance) {
 }
 
 function computeGain(self, other) {
+  // A dead player (hp reported as exactly 0 - not undefined/unknown) is muted for
+  // everyone in the room immediately, regardless of distance.
+  if (other.hp === 0) {
+    return 0;
+  }
   // No raw x/y/z fallback anymore (see hasMapPosition) - a peer without map
   // coordinates yet (just joined, older client, mock-client.js) has no distance
   // that can be computed, so silence rather than guess.

@@ -73,6 +73,7 @@ function makeInitialPeerState(ws, displayName) {
     blockId: undefined,
     mapX: undefined,
     mapY: undefined,
+    hp: undefined,
   };
 }
 
@@ -244,6 +245,9 @@ wss.on('connection', (ws) => {
       peer.blockId = isFiniteNumber(msg.blockId) ? msg.blockId : undefined;
       peer.mapX = isFiniteNumber(msg.mapX) ? msg.mapX : undefined;
       peer.mapY = isFiniteNumber(msg.mapY) ? msg.mapY : undefined;
+      // hp === 0 mutes this peer for everyone in the room (see computeGain) -
+      // undefined (older client, manual test controls) is left un-mutable.
+      peer.hp = isFiniteNumber(msg.hp) ? msg.hp : undefined;
       broadcastVolumes(room);
       return;
     }
