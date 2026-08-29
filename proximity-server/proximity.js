@@ -20,12 +20,13 @@ function hasMapPosition(peer) {
   );
 }
 
-// Elevation is scaled down before entering the Euclidean sum so it counts for less
-// than an equivalent gap in mapX/mapY - since the weight is applied before squaring,
-// a unit of elevation separation contributes ELEVATION_WEIGHT^2 (0.25, i.e. a
-// quarter) as much to the total (squared) distance as a unit of mapX/mapY
-// separation, not half despite the 0.5 weight itself.
-const ELEVATION_WEIGHT = 0.5;
+// Weights elevation above mapX/mapY in the Euclidean sum (2.0 means a unit of
+// elevation contributes ELEVATION_WEIGHT^2 = 4x as much to the squared distance as a
+// unit of mapX/mapY, since the weight applies before squaring). Was 0.5, which made a
+// typical one-floor gap (~9-10 raw y units) collapse to ~4.9 weighted distance - under
+// MIN_RANGE (5), so two players a floor apart still got full volume with no falloff
+// at all.
+const ELEVATION_WEIGHT = 2.0;
 
 function mapDistance(a, b) {
   const dx = a.mapX - b.mapX;
