@@ -319,8 +319,10 @@ export default function App() {
 
   const handleCopyRoomCode = () => {
     if (!activeRoomCode) return;
-    navigator.clipboard.writeText(activeRoomCode).catch(() => {});
-    setRoomCodeCopied(true);
+    navigator.clipboard
+      .writeText(activeRoomCode)
+      .then(() => setRoomCodeCopied(true))
+      .catch((err) => console.warn('[clipboard] copy failed', err));
   };
 
   // Main-process TCP server status + DLL readings - see preload.ts/dll-bridge.d.ts.
@@ -413,7 +415,7 @@ export default function App() {
           Disconnect
         </Button>
         <div className="absolute top-24 right-0 flex w-64 flex-col items-center gap-2 pr-6">
-          <h2 className="font-display text-lg tracking-wide text-primary">Choose Map</h2>
+          <h2 className="font-display text-lg tracking-wide text-primary whitespace-nowrap">Choose Map</h2>
           <img
             src={volcanoManorImage}
             alt="Volcano Manor"
@@ -422,9 +424,9 @@ export default function App() {
           <span className="font-display text-sm tracking-wide text-primary">Volcano Manor</span>
         </div>
         <div className="absolute top-24 left-0 flex w-64 flex-col gap-3 pl-6">
-          <h2 className="font-display text-lg tracking-wide text-primary">Players</h2>
+          <h2 className="font-display text-lg tracking-wide text-primary whitespace-nowrap">Players</h2>
           <ul className="flex flex-col gap-3 font-mono text-sm">
-            <li className="flex items-center gap-2">
+            <li className="flex items-center gap-2 whitespace-nowrap">
               <span>My mic:</span>
               {playerId === hostId && (
                 <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
@@ -434,7 +436,7 @@ export default function App() {
               <Meter innerRef={localMeterRef} />
             </li>
             {peers.map((peer) => (
-              <li key={peer.id} className="flex items-center gap-2">
+              <li key={peer.id} className="flex items-center gap-2 whitespace-nowrap">
                 <span className="text-primary">
                   {peer.displayName}: {peer.gain.toFixed(2)}
                 </span>
@@ -453,6 +455,14 @@ export default function App() {
             ))}
           </ul>
         </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="absolute bottom-6 left-1/2 -translate-x-1/2 border border-primary bg-transparent text-primary hover:bg-primary/10"
+          onClick={() => console.log('[start-game] clicked - not wired up to anything yet')}
+        >
+          Start Game
+        </Button>
       </>
     )}
     <div className="mx-auto w-full max-w-3xl space-y-4">

@@ -116,10 +116,11 @@ const startDllServer = () => {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.on('ready', () => {
-  // The renderer needs mic access for WebRTC; explicitly scope the grant to
-  // 'media' rather than relying on Electron's default handler for everything.
+  // The renderer needs mic access for WebRTC and clipboard-write for the room code
+  // copy button; explicitly scope the grant to those rather than relying on
+  // Electron's default handler for everything.
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(permission === 'media');
+    callback(permission === 'media' || permission === 'clipboard-sanitized-write');
   });
 
   createWindow();
