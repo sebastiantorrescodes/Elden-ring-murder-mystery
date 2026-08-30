@@ -9,18 +9,9 @@
 #include <iomanip>
 #include <cstdlib>
 
-// new
-
 // ============================================================
-// Murder Mystery v0.1
-// Elden Ring 1.16.2
-//
-// TEST HOTKEYS
-//
-// F6 = Equip Murderer weapon
-// F7 = Equip Sheriff weapon
-// F8 = Clear role weapon slots
-//
+// Murder Mystery v1.0
+// Elden Ring 1.17 Updated
 // ============================================================
 
 namespace MM
@@ -113,6 +104,20 @@ namespace MM
     constexpr uint32_t NULL_MM_TALISMAN =
         0x20000000u | 6700u;
 
+    enum class NullTalismanState
+    {
+        Idle,
+        WaitingForEquip,
+        Equipped
+    };
+
+    NullTalismanState nullTalismanState =
+        NullTalismanState::Idle;
+
+    ULONGLONG nullTalismanEquipTime = 0;
+
+    constexpr ULONGLONG NULL_TALISMAN_TEST_DURATION_MS = 100;
+
     // --------------------------------------------------------
     // Goods equipment slots
     // TGA EquipItem slot numbering
@@ -191,6 +196,24 @@ namespace MM
     constexpr int32_t WEAPON_SLOT_PRIMARY = 0;
     constexpr int32_t WEAPON_SLOT_SECONDARY = 1;
     constexpr int32_t WEAPON_SLOT_TERTIARY = 2;
+
+    // --------------------------------------------------------
+    // Result banner requests
+    // --------------------------------------------------------
+
+    constexpr uint32_t FLAG_VICTORY_REQUEST =
+        16009872;
+
+    constexpr uint32_t FLAG_DEFEAT_REQUEST =
+        16009873;
+
+    constexpr uint32_t FLAG_STALEMATE_REQUEST =
+        16009874;
+
+    constexpr uint32_t FLAG_COMMENCE_REQUEST =
+        16009875;
+
+    // --------------------------------------------------------
 
     enum class Role
     {
@@ -271,6 +294,10 @@ namespace MM
 
     HMODULE g_module = nullptr;
     bool g_running = true;
+
+    bool concealingTracking = false;
+    bool mmTalismanWasEquipped = false;
+    bool concealingBreakInProgress = false;
 
     // --------------------------------------------------------
     // Native randomizer-style auto-equip
@@ -2373,57 +2400,45 @@ namespace MM
 
     bool FlushMMTalismanWithNull()
     {
-        // --------------------------------------------------------
-        // 1. Null accessory must physically exist for
-        //    Native GetInventoryId / EquipItem to accept it.
-        // --------------------------------------------------------
-
         if (!GiveNullMMTalisman())
             return false;
 
-        // GiveItem may not be reflected in inventory literally
-        // instantaneously, so give the game a tiny opportunity
-        // to process it.
         Sleep(20);
 
-        // --------------------------------------------------------
-        // 2. Perform a VALID native accessory replacement.
-        //
-        // This is the important network-visible operation:
-        //
-        // Real MM talisman -> Null talisman
-        // --------------------------------------------------------
+        uint32_t before = 0xFFFFFFFF;
+
+        GetEquippedItemInSlot(
+            SLOT_TALISMAN_1,
+            before);
+
+        Log(
+            "[NULL TEST] Slot 17 BEFORE equip = " +
+            Hex(before));
 
         if (!EquipItemNativeByItemId(
             SLOT_TALISMAN_1,
-            static_cast<int32_t>(NULL_MM_TALISMAN)))
+            static_cast<int32_t>(
+                NULL_MM_TALISMAN)))
         {
             Log(
-                "[ERROR] Failed to native-equip MM Null Talisman.");
+                "[ERROR] Failed to native-equip "
+                "MM Null Talisman.");
 
             return false;
         }
 
-        Log(
-            "[TALISMAN] Active MM talisman replaced "
-            "with Null Talisman.");
-
-        // --------------------------------------------------------
         // IMPORTANT:
-        // Give Seamless time to serialize the valid native 6700 replacement talisman
-        // --------------------------------------------------------
-        Sleep(250); // 250
-
-        RemoveLocalTalismanInventory();
-
-        UnequipGearSlot(
-            SLOT_TALISMAN_1);
-
-        RemoveAllInventoryCopies(
-            static_cast<int32_t>(NULL_MM_TALISMAN));
+        // Native EquipItem returns before Elden Ring necessarily
+        // commits the equipment change.
+        //
+        // Do NOT start the 1000 ms lifetime yet.
+        // MainThread will wait until slot 17 actually reads 6700.
+        nullTalismanState =
+            NullTalismanState::WaitingForEquip;
 
         Log(
-            "[TALISMAN] Null flush complete.");
+            "[NULL] 6700 equip requested; "
+            "waiting for slot 17 confirmation.");
 
         return true;
     }
@@ -2677,6 +2692,80 @@ namespace MM
             UnequipMMTalismanEverywhere();
             RemoveLocalTalismanInventory();
         }
+
+        return true;
+    }
+
+    bool RemoveLocalTalismanForRoleChange()
+    {
+        const uintptr_t player =
+            GetLocalPlayerIns();
+
+        if (!player)
+            return false;
+
+        Log("[TALISMAN] Role transition cleanup.");
+
+        // Role changes should still LOOK like the talisman shattered.
+        // However, this is NOT a real gameplay consumption transaction,
+        // so we do not use the 6700 Null Talisman here.
+        ApplySpEffectToChrIns(
+            player,
+            SPEFFECT_TALISMAN_SHATTER_REQUEST);
+
+        // Kill all gameplay effects silently.
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_CONCEALING_VEIL);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_PEARLDRAKE);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_CRUCIBLE_FEATHER);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_CRUCIBLE_FEATHER_CYCLE);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_ALLOYED_FIST);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_ALLOYED_FIST_ARMED);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_ALLOYED_FIST_CONSUME);
+
+        // Clear pending equip requests.
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_EQUIP_CONCEALING);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_EQUIP_PEARLDRAKE);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_EQUIP_CRUCIBLE_FEATHER);
+
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_EQUIP_ALLOYED_FIST);
+
+        // NO shatter request.
+        // NO 6700.
+        // This state is disappearing because the role changed,
+        // not because the talisman was consumed.
+
+        UnequipMMTalismanEverywhere();
+        RemoveLocalTalismanInventory();
 
         return true;
     }
@@ -3661,10 +3750,10 @@ namespace MM
 
     bool ApplyMurdererLoadout()
     {
-        if (HasLocalTalisman())
-        {
-            BreakLocalTalisman();
-        }
+        //if (HasLocalTalisman())
+        //{
+        //    BreakLocalTalisman();
+        //}
 
         ClearRoleMagic();
 
@@ -3706,10 +3795,10 @@ namespace MM
 
     bool ApplySheriffLoadout()
     {
-        if (HasLocalTalisman())
+        /*if (HasLocalTalisman())
         {
             BreakLocalTalisman();
-        }
+        }*/
 
         UnequipGoodsSlot(
             SLOT_QUICK_ITEM_1);
@@ -3836,7 +3925,12 @@ namespace MM
             role != Role::Innocent &&
             HasLocalTalisman())
         {
-            BreakLocalTalisman();
+            // Prevent Veil's normal lifecycle tracker from
+            // interpreting forced removal as consumption.
+            concealingTracking = false;
+            mmTalismanWasEquipped = false;
+
+            RemoveLocalTalismanForRoleChange();
         }
 
         // Innocent can NEVER retain Mark of Greed.
@@ -4175,8 +4269,6 @@ namespace MM
         int pearldrakeLastHp = -1;
         bool pearldrakeTracking = false;
         bool pearldrakeBreakRequested = false;
-        bool concealingTracking = false;
-        bool mmTalismanWasEquipped = false;
         bool alloyedHitPulseHandled = false;
 
         while (g_running)
@@ -4404,6 +4496,84 @@ namespace MM
                 }
             }
 
+            if (nullTalismanState ==
+                NullTalismanState::WaitingForEquip)
+            {
+                uint32_t equipped = 0xFFFFFFFF;
+
+                if (GetEquippedItemInSlot(
+                    SLOT_TALISMAN_1,
+                    equipped))
+                {
+                    if (equipped ==
+                        NULL_MM_TALISMAN)
+                    {
+                        Log(
+                            "[NULL] SUCCESS: slot 17 now contains 6700.");
+
+                        // Now that 6700 is physically equipped,
+                        // remove the consumed real MM talisman from inventory.
+                        RemoveLocalTalismanInventory();
+
+                        // Start the 1000 ms visible test duration NOW.
+                        nullTalismanEquipTime =
+                            GetTickCount64();
+
+                        nullTalismanState =
+                            NullTalismanState::Equipped;
+                    }
+                    else
+                    {
+                        // Native equip is asynchronous / can fail to commit
+                        // on the first request, so keep requesting 6700
+                        // until slot 17 actually changes.
+                        EquipItemNativeByItemId(
+                            SLOT_TALISMAN_1,
+                            static_cast<int32_t>(
+                                NULL_MM_TALISMAN));
+                    }
+                }
+            }
+            else if (
+                nullTalismanState ==
+                NullTalismanState::Equipped)
+            {
+                const ULONGLONG elapsed =
+                    GetTickCount64() -
+                    nullTalismanEquipTime;
+
+                if (elapsed >=
+                    NULL_TALISMAN_TEST_DURATION_MS)
+                {
+                    Log(
+                        "[NULL] 6700 confirmed equipped for "
+                        "1000 ms -> cleaning up.");
+
+                    uint32_t equipped = 0xFFFFFFFF;
+
+                    if (GetEquippedItemInSlot(
+                        SLOT_TALISMAN_1,
+                        equipped) &&
+                        equipped == NULL_MM_TALISMAN)
+                    {
+                        UnequipGearSlot(
+                            SLOT_TALISMAN_1);
+                    }
+
+                    RemoveAllInventoryCopies(
+                        static_cast<int32_t>(
+                            NULL_MM_TALISMAN));
+
+                    nullTalismanState =
+                        NullTalismanState::Idle;
+
+                    concealingBreakInProgress = false;
+
+                    Log(
+                        "[NULL] 6700 cleanup complete.");
+                }
+            }
+
             if (HasSpEffect(
                 SPEFFECT_TALISMAN_BREAK_REQUEST))
             {
@@ -4412,23 +4582,58 @@ namespace MM
 
                 if (player)
                 {
-                    // If Concealing Veil is still active here,
-                    // this was an EARLY uncrouch break, not natural expiry.
-                    if (concealingTracking &&
+                    const bool concealingEarlyCancel =
+                        concealingTracking &&
                         HasSpEffect(
-                            SPEFFECT_CONCEALING_VEIL))
+                            SPEFFECT_CONCEALING_VEIL) &&
+                        GetItemIndex(
+                            static_cast<int32_t>(
+                                CONCEALING_VEIL)) >= 0;
+
+                    if (concealingEarlyCancel)
                     {
+                        Log(
+                            "[CONCEALING] Early uncrouch -> "
+                            "single shatter + 6700 replacement.");
+
+                        concealingBreakInProgress = true;
+
+                        ApplySpEffectToChrIns(
+                            player,
+                            SPEFFECT_TALISMAN_SHATTER_REQUEST);
+
+                        if (!FlushMMTalismanWithNull())
+                        {
+                            Log(
+                                "[ERROR] Concealing early-cancel "
+                                "6700 replacement failed.");
+
+                            UnequipMMTalismanEverywhere();
+                            RemoveLocalTalismanInventory();
+
+                            RemoveSpEffectFromChrIns(
+                                player,
+                                SPEFFECT_CONCEALING_VEIL);
+                        }
+
+                        RemoveSpEffectFromChrIns(
+                            player,
+                            SPEFFECT_EQUIP_CONCEALING);
+
                         concealingTracking = false;
+                        mmTalismanWasEquipped = false;
 
                         Log(
-                            "[CONCEALING] Early cancel acknowledged "
-                            "before generic talisman break.");
+                            "[CONCEALING] Early uncrouch handled.");
+                    }
+                    else
+                    {
+                        BreakLocalTalisman();
+
+                        mmTalismanWasEquipped = false;
                     }
 
-                    BreakLocalTalisman();
-
-                    mmTalismanWasEquipped = false;
-
+                    // Consume 500051 AFTER the talisman transaction.
                     RemoveSpEffectFromChrIns(
                         player,
                         SPEFFECT_TALISMAN_BREAK_REQUEST);
@@ -4444,7 +4649,8 @@ namespace MM
 
             if (!concealingTracking)
             {
-                if (hasConcealing)
+                if (hasConcealing &&
+                    !concealingBreakInProgress)
                 {
                     concealingTracking = true;
 
@@ -4454,33 +4660,12 @@ namespace MM
             }
             else
             {
-                // Natural duration expiry only.
-                //
-                // Early uncrouch is handled by EMEVD 16009987
-                // through 500051 -> BreakLocalTalisman().
                 if (!hasConcealing)
                 {
-                    const uintptr_t player =
-                        GetLocalPlayerIns();
-
-                    if (player)
-                    {
-                        ApplySpEffectToChrIns(
-                            player,
-                            SPEFFECT_TALISMAN_SHATTER_REQUEST);
-                    }
-
-                    if (!FlushMMTalismanWithNull())
-                    {
-                        UnequipMMTalismanEverywhere();
-                        RemoveLocalTalismanInventory();
-                    }
-
-                    mmTalismanWasEquipped = false;
                     concealingTracking = false;
 
                     Log(
-                        "[CONCEALING] Duration expired -> consumed.");
+                        "[CONCEALING] Veil effect ended.");
                 }
             }
 
@@ -4593,67 +4778,67 @@ namespace MM
 
             if (GetAsyncKeyState(VK_F5) & 1)
             {
-                Log("[TEST] F5 -> Dump player states");
-                DumpPlayerStates();
+                if (SetEventFlag(
+                    FLAG_VICTORY_REQUEST,
+                    true))
+                {
+                    Log(
+                        "[BANNER TEST] F5 -> Victory requested.");
+                }
+                else
+                {
+                    Log(
+                        "[ERROR] Failed to request Victory banner.");
+                }
             }
 
             if (GetAsyncKeyState(VK_F6) & 1)
             {
-                const uintptr_t byEntity =
-                    GetChrInsByEntityId(10000);
-
-                const uintptr_t local =
-                    GetLocalPlayerIns();
-
-                Log(
-                    "[ENTITY TEST] Entity 10000 -> " +
-                    Hex(byEntity));
-
-                Log(
-                    "[ENTITY TEST] GetLocalPlayerIns -> " +
-                    Hex(local));
-
-                Log(
-                    std::string("[ENTITY TEST] MATCH=") +
-                    (byEntity == local ? "YES" : "NO"));
-            }
-
-            // F7 = read Murderer event flag
-            if (GetAsyncKeyState(VK_F7) & 1)
-            {
-                bool value = false;
-
-                if (GetEventFlag(
-                    16009991,
-                    value))
-                {
-                    Log(
-                        std::string(
-                            "[FLAG TEST] 16009991 = ") +
-                        (value ? "ON" : "OFF"));
-                }
-                else
-                {
-                    Log(
-                        "[FLAG TEST] Failed to read 16009991.");
-                }
-            }
-
-
-            // F8 = turn Murderer event flag ON
-            if (GetAsyncKeyState(VK_F8) & 1)
-            {
                 if (SetEventFlag(
-                    16009991,
+                    FLAG_DEFEAT_REQUEST,
                     true))
                 {
                     Log(
-                        "[FLAG TEST] Set 16009991 ON.");
+                        "[BANNER TEST] F6 -> Defeat requested.");
                 }
                 else
                 {
                     Log(
-                        "[FLAG TEST] Failed to set 16009991 ON.");
+                        "[ERROR] Failed to request Defeat banner.");
+                }
+            }
+
+            if (GetAsyncKeyState(VK_F7) & 1)
+            {
+                if (SetEventFlag(
+                    FLAG_STALEMATE_REQUEST,
+                    true))
+                {
+                    Log(
+                        "[BANNER TEST] F7 -> Stalemate requested.");
+                }
+                else
+                {
+                    Log(
+                        "[ERROR] Failed to request Stalemate banner.");
+                }
+            }
+
+
+            // F8 = COMMENCE
+            if (GetAsyncKeyState(VK_F8) & 1)
+            {
+                if (SetEventFlag(
+                    FLAG_COMMENCE_REQUEST,
+                    true))
+                {
+                    Log(
+                        "[BANNER TEST] F8 -> Start requested.");
+                }
+                else
+                {
+                    Log(
+                        "[ERROR] Failed to request Start banner.");
                 }
             }
 
@@ -4779,7 +4964,25 @@ namespace MM
                     HasSpEffect(SPEFFECT_EQUIP_CRUCIBLE_FEATHER) ||
                     HasSpEffect(SPEFFECT_EQUIP_ALLOYED_FIST);
 
-                if (!ownsMMTalisman)
+                // --------------------------------------------------------
+                // IMPORTANT:
+                // A real talisman -> 6700 replacement is NOT a manual
+                // unequip. Ignore equipment changes for the entire null
+                // replacement transaction.
+                // --------------------------------------------------------
+
+                const bool nullReplacementInProgress =
+                    nullTalismanState !=
+                    NullTalismanState::Idle;
+
+                if (nullReplacementInProgress ||
+                    concealingBreakInProgress)
+                {
+                    // Do NOT let the still-equipped 6010 re-arm
+                    // mmTalismanWasEquipped while we wait for 6700.
+                    mmTalismanWasEquipped = false;
+                }
+                else if (!ownsMMTalisman)
                 {
                     mmTalismanWasEquipped = false;
                 }
@@ -4830,11 +5033,11 @@ namespace MM
                         RemoveSpEffectFromChrIns(
                             player,
                             SPEFFECT_EQUIP_ALLOYED_FIST);
-                    }
 
-                    ApplySpEffectToChrIns(
-                        player,
-                        SPEFFECT_TALISMAN_SHATTER_REQUEST);
+                        ApplySpEffectToChrIns(
+                            player,
+                            SPEFFECT_TALISMAN_SHATTER_REQUEST);
+                    }
 
                     RemoveLocalTalismanInventory();
 
