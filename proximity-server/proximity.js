@@ -4,14 +4,15 @@ const MIN_RANGE = 5; // full volume at or below this distance
 const MAX_RANGE = 30; // silent at or beyond this distance
 
 // mapX/mapY (see the Location comment in WorldChrMan.h) come from each client's own
-// CsMenuManImp read, sent alongside raw x/y/z. mapX/mapY plus raw z (the "depth"
-// reading - Location has no third axis of its own, so z is borrowed straight from
-// the raw x/y/z reading below) drive the gain distance - no raw x/y, and no blockId
-// gating either (mapX/mapY alone proved reliable enough in testing that the
-// "confirmed different instance" blockId check was dropped - see git history for
-// sameBlock/DIFFERENT_AREA_GAIN if it's ever wanted back). One consequence: a peer
-// that hasn't reported map coordinates yet can't have a gain computed at all - see
-// hasMapPosition below.
+// CsMenuManImp read, sent alongside raw x/y/z. mapX/mapY plus raw y (elevation -
+// Location has no third axis of its own, so the vertical component is borrowed
+// straight from the raw x/y/z reading below; y rather than z since the raw frame is
+// y-up - see computeRelativeOffset's panner mapping) drive the gain distance - no raw
+// x/z, and no blockId gating either (mapX/mapY alone proved reliable enough in
+// testing that the "confirmed different instance" blockId check was dropped - see
+// git history for sameBlock/DIFFERENT_AREA_GAIN if it's ever wanted back). One
+// consequence: a peer that hasn't reported map coordinates yet can't have a gain
+// computed at all - see hasMapPosition below.
 function hasMapPosition(peer) {
   return (
     typeof peer.mapX === 'number' && Number.isFinite(peer.mapX) &&
@@ -19,11 +20,19 @@ function hasMapPosition(peer) {
   );
 }
 
+// Weights elevation above mapX/mapY in the Euclidean sum (2.0 means a unit of
+// elevation contributes ELEVATION_WEIGHT^2 = 4x as much to the squared distance as a
+// unit of mapX/mapY, since the weight applies before squaring). Was 0.5, which made a
+// typical one-floor gap (~9-10 raw y units) collapse to ~4.9 weighted distance - under
+// MIN_RANGE (5), so two players a floor apart still got full volume with no falloff
+// at all.
+const ELEVATION_WEIGHT = 2.0;
+
 function mapDistance(a, b) {
   const dx = a.mapX - b.mapX;
   const dy = a.mapY - b.mapY;
-  const dz = a.z - b.z;
-  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  const dElevation = (a.y - b.y) * ELEVATION_WEIGHT;
+  return Math.sqrt(dx * dx + dy * dy + dElevation * dElevation);
 }
 
 // Eased falloff (t normalized 0..1 across the range, gain = (1-t)^2) rather than a
