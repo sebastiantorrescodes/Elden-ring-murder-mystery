@@ -35,12 +35,22 @@ interface SignalMessage {
   from: PeerId;
   data: unknown;
 }
+// Relayed from the room host to this peer only (see server.js's roomHosts check) -
+// name matches an MMCommand enum value on the DLL side verbatim (e.g. "SetMurderer"),
+// forwarded to window.dllBridge.sendCommand as-is. Unknown names are rejected DLL-side
+// (HandleNetworkLine), not here - single source of truth for what's valid.
+interface CommandMessage {
+  type: 'command';
+  name: string;
+  params?: Record<string, string>;
+}
 type ServerMessage =
   | WelcomeMessage
   | PeerJoinedMessage
   | PeerLeftMessage
   | VolumesMessage
-  | SignalMessage;
+  | SignalMessage
+  | CommandMessage;
 
 export interface SignalingClientOptions {
   url: string;
@@ -58,6 +68,7 @@ export interface SignalingClientOptions {
   onPeerLeft?: (id: PeerId) => void;
   onVolumes?: (volumes: Record<PeerId, PeerVolume>) => void;
   onSignal?: (from: PeerId, data: unknown) => void;
+  onCommand?: (name: string, params?: Record<string, string>) => void;
 }
 
 export class SignalingClient {
@@ -106,6 +117,9 @@ export class SignalingClient {
       case 'signal':
         this.options.onSignal?.(msg.from, msg.data);
         break;
+      case 'command':
+        this.options.onCommand?.(msg.name, msg.params);
+        break;
     }
   }
 
@@ -141,6 +155,11 @@ export class SignalingClient {
 
   sendSignal(to: PeerId, data: unknown) {
     this.send({ type: 'signal', to, data });
+  }
+
+  // Only takes effect server-side if this client is the room's host - see server.js.
+  sendCommand(to: PeerId, name: string, params?: Record<string, string>) {
+    this.send({ type: 'command', to, name, params });
   }
 
   close() {

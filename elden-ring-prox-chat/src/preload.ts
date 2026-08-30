@@ -14,4 +14,6 @@ contextBridge.exposeInMainWorld('dllBridge', {
     ipcRenderer.on('dll-status', listener);
     return () => ipcRenderer.removeListener('dll-status', listener);
   },
+  sendCommand: (commandName: string, params?: Record<string, string>): Promise<boolean> =>
+    ipcRenderer.invoke('mm-send-command', commandName, params),
 });
