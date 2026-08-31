@@ -41,6 +41,7 @@ export class WebRtcMesh {
   constructor(
     private signaling: SignalingClient,
     private localStream: MediaStream | null,
+    outputDeviceId?: string,
   ) {
     console.log(
       `[webrtc] local stream: ${localStream ? `${localStream.getAudioTracks().length} audio track(s)` : 'none (no mic)'}`,
@@ -52,6 +53,10 @@ export class WebRtcMesh {
       .resume()
       .then(() => console.log(`[webrtc] audioCtx resumed, state=${this.audioCtx.state}`))
       .catch((err) => console.warn('[webrtc] audioCtx resume failed', err));
+
+    if (outputDeviceId) {
+      this.setOutputDevice(outputDeviceId);
+    }
 
     // The listener stays fixed at the origin, facing -Z with +Y up (Web Audio's own
     // default) for the whole session - the server already rotates each peer's
@@ -162,6 +167,24 @@ export class WebRtcMesh {
     peer.pannerNode.positionX.linearRampToValueAtTime(relX, now + 0.15);
     peer.pannerNode.positionY.linearRampToValueAtTime(relY, now + 0.15);
     peer.pannerNode.positionZ.linearRampToValueAtTime(relZ, now + 0.15);
+  }
+
+  // Routes all peer audio (which all converges on this shared audioCtx.destination -
+  // see getOrCreatePeer) to a specific output device. This is the modern Audio Output
+  // Devices API (AudioContext.prototype.setSinkId) - lib.dom.d.ts doesn't have it yet
+  // as of TS 5.9 (only HTMLMediaElement.setSinkId is typed there), hence the cast, but
+  // it's been in Chromium since M110 and this app ships on a much newer Electron/Chromium.
+  async setOutputDevice(deviceId: string): Promise<void> {
+    const ctx = this.audioCtx as AudioContext & { setSinkId?: (sinkId: string) => Promise<void> };
+    if (!ctx.setSinkId) {
+      console.warn('[webrtc] AudioContext.setSinkId unsupported - output device selection unavailable');
+      return;
+    }
+    try {
+      await ctx.setSinkId(deviceId);
+    } catch (err) {
+      console.warn(`[webrtc] setSinkId(${deviceId}) failed`, err);
+    }
   }
 
   closeAll() {
