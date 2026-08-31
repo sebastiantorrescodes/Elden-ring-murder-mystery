@@ -51,6 +51,7 @@ const DEFAULT_ROUND_DURATION_MIN: RoundDurationMin = 5;
 const PLAYER_ID_STORAGE_KEY = 'elden-ring-prox-chat:playerId';
 const DISPLAY_NAME_STORAGE_KEY = 'elden-ring-prox-chat:displayName';
 const MIC_STORAGE_KEY = 'elden-ring-prox-chat:selectedMic';
+const OUTPUT_DEVICE_STORAGE_KEY = 'elden-ring-prox-chat:selectedOutputDevice';
 const ROUND_DURATION_STORAGE_KEY = 'elden-ring-prox-chat:roundDurationMin';
 
 // Stable per-install identity used for peer routing (server.js's room Map key) - not
@@ -86,6 +87,14 @@ function getStoredMic(): string {
   }
 }
 
+function getStoredOutputDevice(): string {
+  try {
+    return localStorage.getItem(OUTPUT_DEVICE_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
 function getStoredRoundDurationMin(): RoundDurationMin {
   try {
     const stored = Number(localStorage.getItem(ROUND_DURATION_STORAGE_KEY));
@@ -113,13 +122,15 @@ function Meter({ innerRef }: { innerRef: React.Ref<HTMLDivElement> }) {
   );
 }
 
-type View = 'landing' | 'settings';
+// 'main' is the landing form while disconnected, or the room UI once connected.
+// 'settings' (display name/mic - open to everyone) and 'game-settings' (round
+// length - host-only, see the isHost-gated button that opens it) both overlay
+// 'main' and don't affect isConnected/the room's live audio/signaling state
+// underneath them.
+type View = 'main' | 'settings' | 'game-settings';
 
 export default function App() {
-  // Only meaningful while !isConnected - Host/Join (the only ways to become
-  // connected) only exist on the landing view, so there's no path from settings
-  // straight into a connected session that would leave this stale.
-  const [view, setView] = useState<View>('landing');
+  const [view, setView] = useState<View>('main');
   const [playerId] = useState(() => getOrCreatePlayerId());
   const [displayName, setDisplayName] = useState(() => getStoredDisplayName());
   // What's typed into the "join" field - distinct from activeRoomCode (the room
@@ -148,6 +159,8 @@ export default function App() {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedMic, setSelectedMic] = useState(() => getStoredMic());
+  const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedOutputDevice, setSelectedOutputDevice] = useState(() => getStoredOutputDevice());
   const [roundDurationMin, setRoundDurationMin] = useState(() => getStoredRoundDurationMin());
   // True for a brief window right after clicking Save, so the settings view can show
   // a "Saved" confirmation before returning to the landing view.
@@ -189,19 +202,26 @@ export default function App() {
 
   // Device labels are blank until a mic permission has been granted at least once,
   // so this is called both on mount and again right after getUserMedia succeeds.
-  const populateMicList = async () => {
+  // Output device labels unlock the same way, off that same mic permission - there's
+  // no separate permission prompt for enumerating audiooutput devices in Chromium.
+  const populateAudioDevices = async () => {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const audioInputs = devices.filter((d) => d.kind === 'audioinput');
+    const audioOutputs = devices.filter((d) => d.kind === 'audiooutput');
     setMicDevices(audioInputs);
+    setOutputDevices(audioOutputs);
     setSelectedMic((prev) =>
       audioInputs.some((d) => d.deviceId === prev) ? prev : (audioInputs[0]?.deviceId ?? ''),
+    );
+    setSelectedOutputDevice((prev) =>
+      audioOutputs.some((d) => d.deviceId === prev) ? prev : (audioOutputs[0]?.deviceId ?? ''),
     );
   };
 
   useEffect(() => {
-    populateMicList();
-    navigator.mediaDevices.addEventListener('devicechange', populateMicList);
-    return () => navigator.mediaDevices.removeEventListener('devicechange', populateMicList);
+    populateAudioDevices();
+    navigator.mediaDevices.addEventListener('devicechange', populateAudioDevices);
+    return () => navigator.mediaDevices.removeEventListener('devicechange', populateAudioDevices);
   }, []);
 
   // Persist Settings fields as they're edited, not just at connect time, so the
@@ -223,6 +243,15 @@ export default function App() {
       // non-fatal - just won't be remembered next launch
     }
   }, [selectedMic]);
+
+  useEffect(() => {
+    if (!selectedOutputDevice) return; // avoid clobbering a stored value before devices finish loading
+    try {
+      localStorage.setItem(OUTPUT_DEVICE_STORAGE_KEY, selectedOutputDevice);
+    } catch {
+      // non-fatal - just won't be remembered next launch
+    }
+  }, [selectedOutputDevice]);
 
   useEffect(() => {
     try {
@@ -288,7 +317,7 @@ export default function App() {
     setRoundEndsAt(null);
     setStatus('disconnected');
     setIsConnected(false);
-    setView('landing');
+    setView('main');
   };
 
   // Shared by both hosting and joining - the only difference is whether `room` is
@@ -303,7 +332,7 @@ export default function App() {
         video: false,
       });
       localStreamRef.current = stream;
-      await populateMicList(); // labels are blank until permission is granted; refresh now that it is
+      await populateAudioDevices(); // labels are blank until permission is granted; refresh now that it is
     } catch (err) {
       console.warn('[mic] getUserMedia failed, continuing without a mic', err);
       localStreamRef.current = null;
@@ -374,7 +403,7 @@ export default function App() {
       },
     });
     signalingRef.current = signaling;
-    meshRef.current = new WebRtcMesh(signaling, localStreamRef.current);
+    meshRef.current = new WebRtcMesh(signaling, localStreamRef.current, selectedOutputDevice);
   };
 
   const handleHostClick = async () => {
@@ -560,7 +589,7 @@ export default function App() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center p-8">
-    {!isConnected && view === 'landing' && (
+    {!isConnected && view === 'main' && (
       <Button
         variant="ghost"
         size="sm"
@@ -570,17 +599,17 @@ export default function App() {
         <SettingsIcon /> Settings
       </Button>
     )}
-    {!isConnected && view === 'settings' && (
+    {view !== 'main' && (
       <Button
         variant="ghost"
         size="sm"
         className="absolute top-6 left-6"
-        onClick={() => setView('landing')}
+        onClick={() => setView('main')}
       >
         <ArrowLeft /> Back
       </Button>
     )}
-    {isConnected && (
+    {isConnected && view === 'main' && (
       <>
         <div className="group absolute top-6 left-6 flex items-center gap-1">
           <h1 className="font-display text-2xl tracking-wide text-primary">
@@ -595,9 +624,16 @@ export default function App() {
             {roomCodeCopied ? <Check /> : <Clipboard />}
           </Button>
         </div>
-        <Button variant="destructive" className="absolute top-6 right-6" onClick={handleDisconnectClick}>
-          Disconnect
-        </Button>
+        <div className="absolute top-6 right-6 flex items-center gap-2">
+          {isHost && (
+            <Button variant="ghost" size="sm" onClick={() => setView('game-settings')}>
+              Game Settings
+            </Button>
+          )}
+          <Button variant="destructive" onClick={handleDisconnectClick}>
+            Disconnect
+          </Button>
+        </div>
         {remainingMs !== null && (
           <h1 className="absolute top-6 left-1/2 -translate-x-1/2 font-display text-2xl tracking-wide text-primary">
             <span className="font-mono">{formatDuration(remainingMs)}</span>
@@ -622,19 +658,19 @@ export default function App() {
                   Host
                 </span>
               )}
+              <Meter innerRef={localMeterRef} />
               <button
                 type="button"
                 onClick={handleReadyToggle}
                 className={cn(
-                  'rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors',
+                  'ml-4 rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors',
                   myReady
-                    ? 'bg-primary/20 text-primary'
+                    ? 'bg-green-500/20 text-green-400'
                     : 'bg-muted text-muted-foreground hover:bg-primary/10',
                 )}
               >
                 {myReady ? 'Ready' : 'Not Ready'}
               </button>
-              <Meter innerRef={localMeterRef} />
             </li>
             {peers.map((peer) => (
               <li key={peer.id} className="flex items-center gap-2 whitespace-nowrap">
@@ -646,20 +682,20 @@ export default function App() {
                     Host
                   </span>
                 )}
-                <span
-                  className={cn(
-                    'rounded px-1.5 py-0.5 text-[10px] font-semibold',
-                    peer.ready ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground',
-                  )}
-                >
-                  {peer.ready ? 'Ready' : 'Not Ready'}
-                </span>
                 <Meter
                   innerRef={(el) => {
                     if (el) peerMeterRefs.current.set(peer.id, el);
                     else peerMeterRefs.current.delete(peer.id);
                   }}
                 />
+                <span
+                  className={cn(
+                    'ml-8 rounded px-1.5 py-0.5 text-[10px] font-semibold',
+                    peer.ready ? 'bg-green-500/20 text-green-400' : 'bg-muted text-muted-foreground',
+                  )}
+                >
+                  {peer.ready ? 'Ready' : 'Not Ready'}
+                </span>
               </li>
             ))}
           </ul>
@@ -707,7 +743,7 @@ export default function App() {
         </h1>
       )}
 
-      {isConnected ? null : view === 'settings' ? (
+      {view === 'settings' ? (
         <div className="flex flex-col items-center gap-4 pt-6">
           <h2 className="font-display text-4xl tracking-wide text-primary">Settings</h2>
           <div className="grid gap-1.5">
@@ -736,12 +772,40 @@ export default function App() {
             </Select>
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="settings-round-duration">Round length</Label>
+            <Label htmlFor="settings-output">Output device</Label>
+            <Select value={selectedOutputDevice} onValueChange={setSelectedOutputDevice}>
+              <SelectTrigger id="settings-output" className="w-72">
+                <SelectValue placeholder="output device" />
+              </SelectTrigger>
+              <SelectContent>
+                {outputDevices.map((device) => (
+                  <SelectItem key={device.deviceId} value={device.deviceId}>
+                    {device.label || `Speaker (${device.deviceId.slice(0, 8)})`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button className="w-72" disabled={justSaved} onClick={handleSaveSettings}>
+            {justSaved ? (
+              <>
+                <Check /> Saved
+              </>
+            ) : (
+              'Save'
+            )}
+          </Button>
+        </div>
+      ) : view === 'game-settings' ? (
+        <div className="flex flex-col items-center gap-4 pt-6">
+          <h2 className="font-display text-4xl tracking-wide text-primary">Game Settings</h2>
+          <div className="grid gap-1.5">
+            <Label htmlFor="game-settings-round-duration">Round length</Label>
             <Select
               value={String(roundDurationMin)}
               onValueChange={(value) => setRoundDurationMin(Number(value) as RoundDurationMin)}
             >
-              <SelectTrigger id="settings-round-duration" className="w-72">
+              <SelectTrigger id="game-settings-round-duration" className="w-72">
                 <SelectValue placeholder="round length" />
               </SelectTrigger>
               <SelectContent>
@@ -764,7 +828,7 @@ export default function App() {
             )}
           </Button>
         </div>
-      ) : (
+      ) : isConnected ? null : (
         <div className="flex flex-col items-center gap-4 pt-6">
           <p className="text-sm text-muted-foreground">
             Playing as <span className="text-primary">{displayName || 'no name set'}</span>
