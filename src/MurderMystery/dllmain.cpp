@@ -5,14 +5,14 @@
 #include <fstream>
 #include <string>
 #include <vector>
-#include <map>
 #include <sstream>
 #include <iomanip>
 #include <cstdlib>
+#include <map>
 #include "MMTcpClient.h"
 
 // ============================================================
-// Murder Mystery v1.2
+// Murder Mystery v1.3
 // Elden Ring 1.17 Updated
 // ============================================================
 
@@ -4364,7 +4364,9 @@ namespace MM
         while (g_running)
         {
             std::vector<std::string> mmLines;
+
             mmTcpClient.poll(mmLines);
+
             for (const std::string& mmLine : mmLines)
             {
                 HandleNetworkLine(mmLine);
