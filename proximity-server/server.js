@@ -82,6 +82,7 @@ function makeInitialPeerState(ws, displayName) {
   return {
     ws,
     displayName,
+    ready: false,
     x: undefined,
     y: undefined,
     z: undefined,
@@ -234,7 +235,7 @@ wss.on('connection', (ws) => {
         hostId: roomHosts.get(roomId) || null,
         peers: [...room.entries()]
           .filter(([id]) => id !== peerId)
-          .map(([id, peer]) => ({ id, displayName: peer.displayName })),
+          .map(([id, peer]) => ({ id, displayName: peer.displayName, ready: peer.ready })),
       });
       broadcast(room, { type: 'peer-joined', id: peerId, displayName }, ws);
       console.log(`[join] ${peerId} ("${displayName}") joined room "${roomId}" (${room.size} total)`);
@@ -278,6 +279,31 @@ wss.on('connection', (ws) => {
       if (target) {
         send(target.ws, { type: 'signal', from: peerId, data: msg.data });
       }
+      return;
+    }
+
+    if (msg.type === 'ready') {
+      if (typeof msg.ready !== 'boolean') return;
+      const peer = room.get(peerId);
+      if (!peer) return;
+      peer.ready = msg.ready;
+      // Broadcast to the whole room including the sender - keeps ready state
+      // fully server-authoritative (same reasoning as broadcastVolumes) instead
+      // of each client also optimistically updating its own local copy.
+      broadcast(room, { type: 'peer-ready', id: peerId, ready: msg.ready });
+      return;
+    }
+
+    if (msg.type === 'round-timer') {
+      // Same trust boundary as 'command' below - only the host starts/clears the
+      // round timer, and it's broadcast (not per-target) since every player needs
+      // to count down from the same deadline.
+      if (roomHosts.get(roomId) !== peerId) {
+        console.log(`[round-timer] rejected: "${peerId}" is not host of room "${roomId}"`);
+        return;
+      }
+      if (msg.endsAt !== null && !isFiniteNumber(msg.endsAt)) return;
+      broadcast(room, { type: 'round-timer', endsAt: msg.endsAt });
       return;
     }
 
