@@ -33,6 +33,12 @@ interface PeerRow {
 // Only one server in use - not something worth exposing as an editable field.
 const SERVER_URL = 'wss://er-proximity-chat.duckdns.org';
 
+// Murder Mystery needs exactly one Murderer and one Sheriff plus at least two
+// Innocents to be worth playing, and stops making sense past 6 for a single room.
+// MIN temporarily dropped to 1 for solo testing - restore to 4 before real games.
+const MIN_GAME_PLAYERS = 1;
+const MAX_GAME_PLAYERS = 6;
+
 const PLAYER_ID_STORAGE_KEY = 'elden-ring-prox-chat:playerId';
 const DISPLAY_NAME_STORAGE_KEY = 'elden-ring-prox-chat:displayName';
 const MIC_STORAGE_KEY = 'elden-ring-prox-chat:selectedMic';
@@ -287,6 +293,11 @@ export default function App() {
       onSignal: (from, data) => {
         meshRef.current?.handleSignal(from, data as SignalPayload);
       },
+      // Relayed from the room host via server.js - forward straight to the local
+      // MurderMystery.dll connection (see main.ts's sendMmCommand / preload.ts).
+      onCommand: (name, params) => {
+        void window.dllBridge.sendCommand(name, params);
+      },
     });
     signalingRef.current = signaling;
     meshRef.current = new WebRtcMesh(signaling, localStreamRef.current);
@@ -315,6 +326,46 @@ export default function App() {
 
   const handleDisconnectClick = () => {
     signalingRef.current?.close();
+  };
+
+  // Fisher-Yates - Math.random()-based .sort() comparators are a common shortcut but
+  // don't actually produce a uniform shuffle, and fairness is the whole point of
+  // randomly picking who's the Murderer.
+  function shuffled<T>(items: T[]): T[] {
+    const result = [...items];
+    for (let i = result.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [result[i], result[j]] = [result[j], result[i]];
+    }
+    return result;
+  }
+
+  // Only the room host's "command" messages are honored server-side (see server.js),
+  // and the button below is only rendered for the host - this is the one place role
+  // assignment happens, not something each client decides for itself.
+  const handleStartGameClick = () => {
+    if (!signalingRef.current) return;
+
+    const allPlayerIds = shuffled([playerId, ...peers.map((peer) => peer.id)]);
+    if (allPlayerIds.length < MIN_GAME_PLAYERS || allPlayerIds.length > MAX_GAME_PLAYERS) {
+      setStatus(`need ${MIN_GAME_PLAYERS}-${MAX_GAME_PLAYERS} players to start (currently ${allPlayerIds.length})`);
+      return;
+    }
+
+    const roleByPlayerId = new Map<string, 'Murderer' | 'Sheriff' | 'Innocent'>();
+    roleByPlayerId.set(allPlayerIds[0], 'Murderer');
+    if (allPlayerIds.length > 1) roleByPlayerId.set(allPlayerIds[1], 'Sheriff');
+    for (let i = 2; i < allPlayerIds.length; i++) {
+      roleByPlayerId.set(allPlayerIds[i], 'Innocent');
+    }
+
+    // Sent to every player including this one (the relay round-trips back through
+    // the server the same way for the host as for anyone else - see server.js's
+    // 'command' handler forwarding to room.get(msg.to) regardless of who msg.to is),
+    // so the host's own MurderMystery.dll gets the exact same StartGame treatment.
+    for (const [id, role] of roleByPlayerId) {
+      signalingRef.current.sendCommand(id, 'StartGame', { role });
+    }
   };
 
   const handleCopyRoomCode = () => {
@@ -456,14 +507,16 @@ export default function App() {
             ))}
           </ul>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="absolute bottom-6 left-1/2 -translate-x-1/2 border border-primary bg-transparent text-primary hover:bg-primary/10"
-          onClick={() => console.log('[start-game] clicked - not wired up to anything yet')}
-        >
-          Start Game
-        </Button>
+        {playerId === hostId && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="absolute bottom-6 left-1/2 -translate-x-1/2 border border-primary bg-transparent text-primary hover:bg-primary/10"
+            onClick={handleStartGameClick}
+          >
+            Start Game
+          </Button>
+        )}
       </>
     )}
     <div className="mx-auto w-full max-w-3xl space-y-4">

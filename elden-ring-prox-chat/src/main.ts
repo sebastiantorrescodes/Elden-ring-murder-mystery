@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session } from 'electron';
+import { app, BrowserWindow, ipcMain, session } from 'electron';
 import path from 'node:path';
 import net from 'node:net';
 import started from 'electron-squirrel-startup';
@@ -21,7 +21,20 @@ app.setPath('userData', path.join(app.getPath('temp'), 'elden-ring-prox-chat', `
 const DLL_TCP_HOST = '127.0.0.1';
 const DLL_TCP_PORT = 9191;
 
+// Reverse direction of the port above: MurderMystery.dll's MMTcpClient connects out to
+// this port the same way SeamlessCoopExtension's DLL connects to DLL_TCP_PORT, but
+// this channel carries commands (Electron -> DLL) instead of telemetry (DLL ->
+// Electron), so this side writes to the socket rather than only reading from it. Kept
+// on its own port instead of multiplexed onto DLL_TCP_PORT since the two DLLs and
+// their protocols are otherwise unrelated.
+const MM_TCP_HOST = '127.0.0.1';
+const MM_TCP_PORT = 9192;
+
 let mainWindow: BrowserWindow | null = null;
+
+// The single MurderMystery.dll connection, if one is currently connected. Commands
+// (from the VPS via signaling-client.ts, or manual testing) are written here.
+let mmSocket: net.Socket | null = null;
 
 // Packaged builds have no attached console, so plain console.log here is invisible
 // to anyone not running from a dev terminal - mirror it into the renderer's visible
@@ -112,6 +125,64 @@ const startDllServer = () => {
   return server;
 };
 
+const startMmCommandServer = () => {
+  const server = net.createServer((socket) => {
+    logStatus(`[mm-server] MurderMystery.dll connected from ${socket.remoteAddress}`);
+    // Same reasoning as startDllServer's setKeepAlive: notice a DLL that vanished
+    // without a clean close (game crash, force-quit) instead of leaving a stale
+    // socket that silently swallows every write.
+    socket.setKeepAlive(true, 5000);
+    mmSocket = socket;
+
+    socket.on('close', () => {
+      logStatus('[mm-server] MurderMystery.dll disconnected');
+      if (mmSocket === socket) {
+        mmSocket = null;
+      }
+    });
+
+    socket.on('error', (err) => {
+      logStatus(`[mm-server] socket error: ${err.message}`);
+    });
+  });
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      // Same multi-instance local testing case as startDllServer above.
+      logStatus(
+        `[mm-server] port ${MM_TCP_PORT} is already owned by another window - this window ` +
+          'will not be able to send MurderMystery commands.',
+      );
+      return;
+    }
+    logStatus(`[mm-server] server error: ${err.message}`);
+  });
+
+  server.listen(MM_TCP_PORT, MM_TCP_HOST, () => {
+    logStatus(`[mm-server] listening for MurderMystery.dll connections on ${MM_TCP_HOST}:${MM_TCP_PORT}`);
+  });
+
+  return server;
+};
+
+// commandName matches an MMCommand-ish name on the DLL side (e.g. "SetMurderer",
+// "StartGame") - HandleNetworkLine there strips the "cmd=" prefix, switches on the
+// rest, and reads any "key=value" params (e.g. StartGame's role=) off the same line.
+function sendMmCommand(commandName: string, params?: Record<string, string>): boolean {
+  if (!mmSocket || mmSocket.destroyed) {
+    logStatus(`[mm-server] cannot send "${commandName}" - no MurderMystery.dll connected`);
+    return false;
+  }
+  const paramText = params
+    ? Object.entries(params)
+        .map(([key, value]) => ` ${key}=${value}`)
+        .join('')
+    : '';
+  mmSocket.write(`cmd=${commandName}${paramText}\n`);
+  logStatus(`[mm-server] sent command: ${commandName}${paramText}`);
+  return true;
+}
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
@@ -125,7 +196,15 @@ app.on('ready', () => {
 
   createWindow();
   startDllServer();
+  startMmCommandServer();
 });
+
+// Renderer-invocable for now (manual testing); the VPS-driven path (once wired,
+// via signaling-client.ts) will call sendMmCommand directly from the main process
+// instead of going through this IPC handler.
+ipcMain.handle('mm-send-command', (_event, commandName: string, params?: Record<string, string>) =>
+  sendMmCommand(commandName, params),
+);
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits

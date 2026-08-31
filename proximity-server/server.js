@@ -19,6 +19,25 @@ function isValidIdString(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_ID_LENGTH;
 }
 
+const MAX_COMMAND_PARAMS = 8;
+
+// command messages' params (e.g. StartGame's { role: "Murderer" }) - plain
+// string->string only, capped in both key/value length and entry count so this
+// can't be used to smuggle an oversized payload to a peer.
+function isValidParams(params) {
+  if (typeof params !== 'object' || params === null || Array.isArray(params)) return false;
+  const entries = Object.entries(params);
+  if (entries.length > MAX_COMMAND_PARAMS) return false;
+  return entries.every(
+    ([key, value]) =>
+      typeof key === 'string' &&
+      key.length > 0 &&
+      key.length <= MAX_ID_LENGTH &&
+      typeof value === 'string' &&
+      value.length <= MAX_ID_LENGTH,
+  );
+}
+
 function resolveDisplayName(value) {
   if (typeof value === 'string') {
     const trimmed = value.trim();
@@ -258,6 +277,26 @@ wss.on('connection', (ws) => {
       const target = room.get(msg.to);
       if (target) {
         send(target.ws, { type: 'signal', from: peerId, data: msg.data });
+      }
+      return;
+    }
+
+    if (msg.type === 'command') {
+      // Only the room's host may direct another peer's game state (e.g. assigning
+      // Murderer/Sheriff/Innocent) - without this, any connected peer could be an
+      // open remote-control channel for any other peer. Same trust boundary as
+      // ROOM_SECRET gating who can create a room in the first place.
+      if (roomHosts.get(roomId) !== peerId) {
+        console.log(`[command] rejected: "${peerId}" is not host of room "${roomId}"`);
+        return;
+      }
+      if (!isValidIdString(msg.to) || typeof msg.name !== 'string' || msg.name.length === 0 || msg.name.length > MAX_ID_LENGTH) {
+        return;
+      }
+      if (msg.params !== undefined && !isValidParams(msg.params)) return;
+      const target = room.get(msg.to);
+      if (target) {
+        send(target.ws, { type: 'command', name: msg.name, params: msg.params });
       }
       return;
     }

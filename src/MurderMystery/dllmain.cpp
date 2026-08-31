@@ -5,9 +5,11 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <map>
 #include <sstream>
 #include <iomanip>
 #include <cstdlib>
+#include "MMTcpClient.h"
 
 // ============================================================
 // Murder Mystery v1.1
@@ -4024,6 +4026,83 @@ namespace MM
         return false;
     }
 
+    // Parses one line received over MMTcpClient from the local Electron app (which in
+    // turn relays it from the VPS) and dispatches it the same way a hotkey does below
+    // in MainThread. Wire format: "cmd=<name> [key=value ...]" - matches the plain
+    // key=value line style the rest of this project's DLL<->app protocol already uses
+    // (see dll-protocol.ts on the Electron side). Params past cmd= are optional and
+    // command-specific (e.g. StartGame's role=).
+    void HandleNetworkLine(const std::string& line)
+    {
+        constexpr const char* kCmdPrefix = "cmd=";
+        constexpr size_t kCmdPrefixLen = 4;
+
+        std::istringstream tokens(line);
+        std::string firstToken;
+        tokens >> firstToken;
+
+        if (firstToken.compare(0, kCmdPrefixLen, kCmdPrefix) != 0)
+        {
+            Log("[NET] Ignoring malformed line: " + line);
+            return;
+        }
+
+        const std::string commandName = firstToken.substr(kCmdPrefixLen);
+
+        std::map<std::string, std::string> params;
+        std::string paramToken;
+        while (tokens >> paramToken)
+        {
+            const size_t eq = paramToken.find('=');
+            if (eq != std::string::npos)
+            {
+                params[paramToken.substr(0, eq)] = paramToken.substr(eq + 1);
+            }
+        }
+
+        if (commandName == "SetMurderer")
+        {
+            ExecuteCommand(MMCommand::SetMurderer);
+        }
+        else if (commandName == "SetSheriff")
+        {
+            ExecuteCommand(MMCommand::SetSheriff);
+        }
+        else if (commandName == "SetInnocent")
+        {
+            ExecuteCommand(MMCommand::SetInnocent);
+        }
+        else if (commandName == "StartGame")
+        {
+            const auto roleParam = params.find("role");
+
+            Role role = Role::None;
+            if (roleParam != params.end())
+            {
+                if (roleParam->second == "Murderer") role = Role::Murderer;
+                else if (roleParam->second == "Sheriff") role = Role::Sheriff;
+                else if (roleParam->second == "Innocent") role = Role::Innocent;
+            }
+
+            if (role == Role::None)
+            {
+                Log("[NET] StartGame missing/invalid role param: " + line);
+                return;
+            }
+
+            Log("[NET] StartGame role=" + roleParam->second);
+
+            // Same random-warp mechanism as the F10 test hotkey - round start needs
+            // both the teleport and the role assignment to happen together.
+            RequestRandomSpawn();
+            SetLocalRole(role);
+        }
+        else
+        {
+            Log("[NET] Unknown command: " + commandName);
+        }
+    }
+
     bool UnequipGoodsSlot(int32_t slot)
     {
         if (!g_equipGoodsAddress)
@@ -4276,8 +4355,20 @@ namespace MM
         bool pearldrakeBreakRequested = false;
         bool alloyedHitPulseHandled = false;
 
+        // Connects out to the local Electron app's command listener (see
+        // dllmain.cpp/main.ts on the Electron side) - same lazy-connect-with-cooldown
+        // shape as SeamlessCoopExtension's TcpTestClient, just read-oriented instead
+        // of write-oriented since this channel carries inbound commands.
+        MMTcpClient mmTcpClient("127.0.0.1", 9192);
+
         while (g_running)
         {
+            std::vector<std::string> mmLines;
+            mmTcpClient.poll(mmLines);
+            for (const std::string& mmLine : mmLines)
+            {
+                HandleNetworkLine(mmLine);
+            }
 
             if (!g_gameDataManAddress)
             {
