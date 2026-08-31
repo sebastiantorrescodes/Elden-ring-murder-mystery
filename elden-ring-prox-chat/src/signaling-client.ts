@@ -6,7 +6,7 @@ interface WelcomeMessage {
   id: PeerId;
   room: string;
   hostId: PeerId | null;
-  peers: { id: PeerId; displayName: string }[];
+  peers: { id: PeerId; displayName: string; ready: boolean }[];
 }
 interface PeerJoinedMessage {
   type: 'peer-joined';
@@ -16,6 +16,23 @@ interface PeerJoinedMessage {
 interface PeerLeftMessage {
   type: 'peer-left';
   id: PeerId;
+}
+// A peer's ready-up state changed (see server.js's 'ready' handler) - broadcast to
+// the whole room including whoever sent it, so ready state stays fully
+// server-authoritative rather than each client also tracking its own locally.
+interface PeerReadyMessage {
+  type: 'peer-ready';
+  id: PeerId;
+  ready: boolean;
+}
+// The round's shared deadline (host-only to send - see server.js's roomHosts
+// check), broadcast to the whole room including the host, so every client
+// counts down from the same absolute timestamp instead of drifting apart with
+// independently-started local timers. null clears it (round ended, whether by
+// End Game or by the countdown reaching zero).
+interface RoundTimerMessage {
+  type: 'round-timer';
+  endsAt: number | null;
 }
 // relX/Y/Z are the peer's position already rotated into the listener's own facing
 // frame server-side (see proximity.js's computeRelativeOffset) - feed straight into
@@ -48,6 +65,8 @@ type ServerMessage =
   | WelcomeMessage
   | PeerJoinedMessage
   | PeerLeftMessage
+  | PeerReadyMessage
+  | RoundTimerMessage
   | VolumesMessage
   | SignalMessage
   | CommandMessage;
@@ -66,6 +85,8 @@ export interface SignalingClientOptions {
   onWelcome?: (msg: WelcomeMessage) => void;
   onPeerJoined?: (id: PeerId, displayName: string) => void;
   onPeerLeft?: (id: PeerId) => void;
+  onPeerReady?: (id: PeerId, ready: boolean) => void;
+  onRoundTimer?: (endsAt: number | null) => void;
   onVolumes?: (volumes: Record<PeerId, PeerVolume>) => void;
   onSignal?: (from: PeerId, data: unknown) => void;
   onCommand?: (name: string, params?: Record<string, string>) => void;
@@ -110,6 +131,12 @@ export class SignalingClient {
         break;
       case 'peer-left':
         this.options.onPeerLeft?.(msg.id);
+        break;
+      case 'peer-ready':
+        this.options.onPeerReady?.(msg.id, msg.ready);
+        break;
+      case 'round-timer':
+        this.options.onRoundTimer?.(msg.endsAt);
         break;
       case 'volumes':
         this.options.onVolumes?.(msg.volumes);
@@ -160,6 +187,15 @@ export class SignalingClient {
   // Only takes effect server-side if this client is the room's host - see server.js.
   sendCommand(to: PeerId, name: string, params?: Record<string, string>) {
     this.send({ type: 'command', to, name, params });
+  }
+
+  sendReady(ready: boolean) {
+    this.send({ type: 'ready', ready });
+  }
+
+  // Only takes effect server-side if this client is the room's host - see server.js.
+  sendRoundTimer(endsAt: number | null) {
+    this.send({ type: 'round-timer', endsAt });
   }
 
   close() {

@@ -310,6 +310,15 @@ namespace MM
     bool mmTalismanWasEquipped = false;
     bool concealingBreakInProgress = false;
 
+    // StartGame no longer applies the role SpEffect right away - it now waits
+    // for the m11_10_00_00 warp event to actually consume the spawn flag
+    // (that's the only reliable "the player has left the lobby" signal we
+    // have, since PlayerInMap is an EMEVD-only condition with no C++-side
+    // equivalent) before granting the role at the Volcano Manor end.
+    Role g_pendingRole = Role::None;
+    uint32_t g_pendingRoleSpawnFlag = 0;
+    bool g_pendingRoleGrant = false;
+
     // --------------------------------------------------------
     // Native randomizer-style auto-equip
     // --------------------------------------------------------
@@ -1808,7 +1817,7 @@ namespace MM
         }
     }
 
-    bool RequestRandomSpawn()
+    bool RequestRandomSpawn(uint32_t* outSpawnFlagId = nullptr)
     {
         const int spawnIndex =
             1 + (rand() % 11);
@@ -1816,6 +1825,14 @@ namespace MM
         Log(
             "[SPAWN TEST] Random spawn selected: " +
             std::to_string(spawnIndex));
+
+        // Mirrors the case table in RequestSpawn() - flag 11109912 is index 1,
+        // ..., flag 11109922 is index 11.
+        if (outSpawnFlagId)
+        {
+            *outSpawnFlagId =
+                11109911u + static_cast<uint32_t>(spawnIndex);
+        }
 
         return RequestSpawn(spawnIndex);
     }
@@ -4099,10 +4116,45 @@ namespace MM
 
             Log("[NET] StartGame role=" + roleParam->second);
 
-            // Same random-warp mechanism as the F10 test hotkey - round start needs
-            // both the teleport and the role assignment to happen together.
-            RequestRandomSpawn();
-            SetLocalRole(role);
+            // A resend of the same in-flight StartGame (relay retry, duplicate
+            // click, etc.) would otherwise re-roll RequestRandomSpawn() and
+            // overwrite g_pendingRoleSpawnFlag with a flag the warp event
+            // hasn't touched yet, orphaning the first TP with nothing left
+            // watching for its arrival. Only a role change supersedes a grant
+            // that's still pending.
+            if (g_pendingRoleGrant && g_pendingRole == role)
+            {
+                Log("[NET] StartGame duplicate of pending grant - ignoring.");
+                return;
+            }
+
+            // Same random-warp mechanism as the F10 test hotkey, but role
+            // assignment is deferred - see g_pendingRoleGrant below. Applying
+            // it here, immediately, would grant the role wherever the player
+            // currently stands (e.g. still in Roundtable Hold), not once
+            // they've actually arrived at Volcano Manor.
+            uint32_t spawnFlagId = 0;
+            RequestRandomSpawn(&spawnFlagId);
+
+            g_pendingRole = role;
+            g_pendingRoleSpawnFlag = spawnFlagId;
+            g_pendingRoleGrant = true;
+
+            Log(
+                "[ROLE] Deferred until arrival at Volcano Manor "
+                "(watching flag " + std::to_string(spawnFlagId) + ").");
+        }
+        else if (commandName == "EndGame")
+        {
+            // Same flag as the F9 test hotkey - see FLAG_RETURN_TO_HUB_REQUEST below.
+            if (SetEventFlag(FLAG_RETURN_TO_HUB_REQUEST, true))
+            {
+                Log("[NET] EndGame -> Return to Roundtable requested.");
+            }
+            else
+            {
+                Log("[ERROR] EndGame -> Failed to request return to Roundtable.");
+            }
         }
         else
         {
@@ -4530,6 +4582,27 @@ namespace MM
                 {
                     Sleep(2000);
                     continue;
+                }
+            }
+
+            // The m11_10_00_00 warp event clears its spawn flag the instant it
+            // fires WarpPlayer (see m11_10_00_00.emevd), so watching that flag
+            // go back OFF is a reliable "the player has landed at Volcano
+            // Manor" signal - there's no PlayerInMap-equivalent memory read on
+            // the C++ side to check this directly.
+            if (g_pendingRoleGrant)
+            {
+                bool spawnFlagStillSet = true;
+
+                if (GetEventFlag(g_pendingRoleSpawnFlag, spawnFlagStillSet) &&
+                    !spawnFlagStillSet)
+                {
+                    Log("[ROLE] Arrived at Volcano Manor - applying deferred role.");
+
+                    if (SetLocalRole(g_pendingRole))
+                    {
+                        g_pendingRoleGrant = false;
+                    }
                 }
             }
 

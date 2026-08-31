@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -28,6 +29,7 @@ interface PeerRow {
   id: string;
   displayName: string;
   gain: number;
+  ready: boolean;
 }
 
 // Only one server in use - not something worth exposing as an editable field.
@@ -39,9 +41,17 @@ const SERVER_URL = 'wss://er-proximity-chat.duckdns.org';
 const MIN_GAME_PLAYERS = 1;
 const MAX_GAME_PLAYERS = 6;
 
+// Round length options, in minutes - the host picks one in Settings; the chosen
+// value is what handleStartGameClick multiplies out to milliseconds and sends
+// via sendRoundTimer.
+const ROUND_DURATION_OPTIONS_MIN = [1, 5, 10] as const;
+type RoundDurationMin = (typeof ROUND_DURATION_OPTIONS_MIN)[number];
+const DEFAULT_ROUND_DURATION_MIN: RoundDurationMin = 5;
+
 const PLAYER_ID_STORAGE_KEY = 'elden-ring-prox-chat:playerId';
 const DISPLAY_NAME_STORAGE_KEY = 'elden-ring-prox-chat:displayName';
 const MIC_STORAGE_KEY = 'elden-ring-prox-chat:selectedMic';
+const ROUND_DURATION_STORAGE_KEY = 'elden-ring-prox-chat:roundDurationMin';
 
 // Stable per-install identity used for peer routing (server.js's room Map key) - not
 // something the user picks or sees; displayName (below) is what's actually shown.
@@ -76,6 +86,25 @@ function getStoredMic(): string {
   }
 }
 
+function getStoredRoundDurationMin(): RoundDurationMin {
+  try {
+    const stored = Number(localStorage.getItem(ROUND_DURATION_STORAGE_KEY));
+    if (ROUND_DURATION_OPTIONS_MIN.includes(stored as RoundDurationMin)) {
+      return stored as RoundDurationMin;
+    }
+  } catch {
+    // fall through to default
+  }
+  return DEFAULT_ROUND_DURATION_MIN;
+}
+
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.ceil(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
 function Meter({ innerRef }: { innerRef: React.Ref<HTMLDivElement> }) {
   return (
     <div className="h-2.5 w-36 overflow-hidden rounded-full bg-muted">
@@ -99,8 +128,27 @@ export default function App() {
   const [roomCodeInput, setRoomCodeInput] = useState('');
   const [activeRoomCode, setActiveRoomCode] = useState('');
   const [hostId, setHostId] = useState<string | null>(null);
+  const isHost = playerId === hostId;
+  // True once the host has clicked Start Game, so the button swaps to End Game -
+  // purely local UI feedback that the click registered, and a guard against
+  // firing handleStartGameClick (and re-rolling/re-sending roles) more than once
+  // per round.
+  const [gameActive, setGameActive] = useState(false);
+  // This player's own ready-up state. Set only from the server's echoed
+  // 'peer-ready' (see onPeerReady below), not optimistically on click - keeps it
+  // in sync with what the rest of the room actually sees, same reasoning as
+  // peerReadyRef for everyone else.
+  const [myReady, setMyReady] = useState(false);
+  // Shared round deadline, echoed back from the server for every client (see
+  // onRoundTimer below) - null means no round is currently timed. A separate
+  // `nowTick` state (updated by the effect below) is what actually drives the
+  // countdown re-rendering; roundEndsAt itself never changes except at round
+  // start/end.
+  const [roundEndsAt, setRoundEndsAt] = useState<number | null>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedMic, setSelectedMic] = useState(() => getStoredMic());
+  const [roundDurationMin, setRoundDurationMin] = useState(() => getStoredRoundDurationMin());
   // True for a brief window right after clicking Save, so the settings view can show
   // a "Saved" confirmation before returning to the landing view.
   const [justSaved, setJustSaved] = useState(false);
@@ -117,6 +165,7 @@ export default function App() {
   const isConnectingRef = useRef(false);
   const peerGainsRef = useRef(new Map<string, number>());
   const peerDisplayNamesRef = useRef(new Map<string, string>());
+  const peerReadyRef = useRef(new Map<string, boolean>());
   // area/camera/block lines arrive separately from slot= lines (once per poll cycle,
   // not per slot) - remember the latest of each so they can be attached to the next
   // position send.
@@ -133,6 +182,7 @@ export default function App() {
         id,
         displayName: peerDisplayNamesRef.current.get(id) ?? id,
         gain,
+        ready: peerReadyRef.current.get(id) ?? false,
       })),
     );
   };
@@ -173,6 +223,14 @@ export default function App() {
       // non-fatal - just won't be remembered next launch
     }
   }, [selectedMic]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ROUND_DURATION_STORAGE_KEY, String(roundDurationMin));
+    } catch {
+      // non-fatal - just won't be remembered next launch
+    }
+  }, [roundDurationMin]);
 
   // displayName/selectedMic are already persisted live by the effects above - Save
   // just gives an explicit, visible confirmation; heading back is still manual (Back button).
@@ -220,10 +278,14 @@ export default function App() {
     localStreamRef.current = null;
     peerGainsRef.current.clear();
     peerDisplayNamesRef.current.clear();
+    peerReadyRef.current.clear();
     peerMeterRefs.current.clear();
     setPeers([]);
     setActiveRoomCode('');
     setHostId(null);
+    setGameActive(false);
+    setMyReady(false);
+    setRoundEndsAt(null);
     setStatus('disconnected');
     setIsConnected(false);
     setView('landing');
@@ -265,6 +327,7 @@ export default function App() {
         for (const peer of msg.peers) {
           meshRef.current?.registerExistingPeer(peer.id);
           peerDisplayNamesRef.current.set(peer.id, peer.displayName);
+          peerReadyRef.current.set(peer.id, peer.ready);
           if (!peerGainsRef.current.has(peer.id)) peerGainsRef.current.set(peer.id, 1);
         }
         syncPeerRows();
@@ -273,15 +336,26 @@ export default function App() {
         meshRef.current?.handlePeerJoined(peerId);
         peerDisplayNamesRef.current.set(peerId, peerDisplayName);
         peerGainsRef.current.set(peerId, 1);
+        peerReadyRef.current.set(peerId, false); // fresh peer state is always unready - see makeInitialPeerState
         syncPeerRows();
       },
       onPeerLeft: (peerId) => {
         meshRef.current?.handlePeerLeft(peerId);
         peerGainsRef.current.delete(peerId);
         peerDisplayNamesRef.current.delete(peerId);
+        peerReadyRef.current.delete(peerId);
         peerMeterRefs.current.delete(peerId);
         syncPeerRows();
       },
+      onPeerReady: (peerId, ready) => {
+        if (peerId === playerId) {
+          setMyReady(ready);
+          return;
+        }
+        peerReadyRef.current.set(peerId, ready);
+        syncPeerRows();
+      },
+      onRoundTimer: (endsAt) => setRoundEndsAt(endsAt),
       onVolumes: (volumes) => {
         for (const [peerId, v] of Object.entries(volumes)) {
           meshRef.current?.setGain(peerId, v.gain);
@@ -340,15 +414,27 @@ export default function App() {
     return result;
   }
 
-  // Only the room host's "command" messages are honored server-side (see server.js),
-  // and the button below is only rendered for the host - this is the one place role
-  // assignment happens, not something each client decides for itself.
+  // Toggles this player's own ready-up state - anyone in the room can do this,
+  // not just the host (unlike Start/End Game below).
+  const handleReadyToggle = () => {
+    signalingRef.current?.sendReady(!myReady);
+  };
+
+  // Only the room host's "command" messages are honored server-side (see server.js) -
+  // this is the one place role assignment happens, not something each client
+  // decides for itself. The button is rendered for everyone but faded/inert for
+  // non-hosts (see the JSX below).
   const handleStartGameClick = () => {
-    if (!signalingRef.current) return;
+    if (!signalingRef.current || gameActive) return;
 
     const allPlayerIds = shuffled([playerId, ...peers.map((peer) => peer.id)]);
     if (allPlayerIds.length < MIN_GAME_PLAYERS || allPlayerIds.length > MAX_GAME_PLAYERS) {
       setStatus(`need ${MIN_GAME_PLAYERS}-${MAX_GAME_PLAYERS} players to start (currently ${allPlayerIds.length})`);
+      return;
+    }
+
+    if (!myReady || peers.some((peer) => !peer.ready)) {
+      setStatus('all players must be ready to start');
       return;
     }
 
@@ -366,7 +452,51 @@ export default function App() {
     for (const [id, role] of roleByPlayerId) {
       signalingRef.current.sendCommand(id, 'StartGame', { role });
     }
+
+    signalingRef.current.sendRoundTimer(Date.now() + roundDurationMin * 60_000);
+    setGameActive(true);
   };
+
+  // Sends everyone (including the host) back to the Roundtable - same
+  // FLAG_RETURN_TO_HUB_REQUEST the DLL's F9 test hotkey sets - then flips the
+  // button back so the host can start another round. Also used by the
+  // round-timer effect below to auto-end when the countdown hits zero, so
+  // clearing the timer here (rather than only on a manual click) covers both.
+  const handleEndGameClick = () => {
+    if (!signalingRef.current) return;
+
+    for (const id of [playerId, ...peers.map((peer) => peer.id)]) {
+      signalingRef.current.sendCommand(id, 'EndGame');
+    }
+
+    signalingRef.current.sendRoundTimer(null);
+    setGameActive(false);
+  };
+
+  // Countdown re-render tick - only runs while a round timer is active, and
+  // stops itself the instant roundEndsAt clears (see the null case above).
+  useEffect(() => {
+    if (roundEndsAt === null) return;
+    // nowTick may be stale by however long the app sat idle before this round
+    // started - refresh it immediately rather than waiting up to 500ms for the
+    // first interval tick, which would otherwise briefly show too much time left.
+    setNowTick(Date.now());
+    const interval = setInterval(() => setNowTick(Date.now()), 500);
+    return () => clearInterval(interval);
+  }, [roundEndsAt]);
+
+  const remainingMs = roundEndsAt === null ? null : Math.max(0, roundEndsAt - nowTick);
+
+  // Host-side auto-end: everyone's countdown reaches 0 in lockstep (same shared
+  // roundEndsAt), but only the host actually has permission to send the EndGame
+  // command server-side (see server.js's roomHosts check), so only the host's
+  // client acts on it. Fires exactly once - handleEndGameClick sets gameActive to
+  // false, which stops this condition from being true again on the next render.
+  useEffect(() => {
+    if (remainingMs === 0 && isHost && gameActive) {
+      handleEndGameClick();
+    }
+  }, [remainingMs, isHost, gameActive]);
 
   const handleCopyRoomCode = () => {
     if (!activeRoomCode) return;
@@ -426,6 +556,8 @@ export default function App() {
     };
   }, []);
 
+  const allReady = myReady && peers.every((peer) => peer.ready);
+
   return (
     <div className="relative flex min-h-screen items-center justify-center p-8">
     {!isConnected && view === 'landing' && (
@@ -466,6 +598,11 @@ export default function App() {
         <Button variant="destructive" className="absolute top-6 right-6" onClick={handleDisconnectClick}>
           Disconnect
         </Button>
+        {remainingMs !== null && (
+          <h1 className="absolute top-6 left-1/2 -translate-x-1/2 font-display text-2xl tracking-wide text-primary">
+            <span className="font-mono">{formatDuration(remainingMs)}</span>
+          </h1>
+        )}
         <div className="absolute top-24 right-0 flex w-64 flex-col items-center gap-2 pr-6">
           <h2 className="font-display text-lg tracking-wide text-primary whitespace-nowrap">Choose Map</h2>
           <img
@@ -480,11 +617,23 @@ export default function App() {
           <ul className="flex flex-col gap-3 font-mono text-sm">
             <li className="flex items-center gap-2 whitespace-nowrap">
               <span>My mic:</span>
-              {playerId === hostId && (
+              {isHost && (
                 <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
                   Host
                 </span>
               )}
+              <button
+                type="button"
+                onClick={handleReadyToggle}
+                className={cn(
+                  'rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors',
+                  myReady
+                    ? 'bg-primary/20 text-primary'
+                    : 'bg-muted text-muted-foreground hover:bg-primary/10',
+                )}
+              >
+                {myReady ? 'Ready' : 'Not Ready'}
+              </button>
               <Meter innerRef={localMeterRef} />
             </li>
             {peers.map((peer) => (
@@ -497,6 +646,14 @@ export default function App() {
                     Host
                   </span>
                 )}
+                <span
+                  className={cn(
+                    'rounded px-1.5 py-0.5 text-[10px] font-semibold',
+                    peer.ready ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground',
+                  )}
+                >
+                  {peer.ready ? 'Ready' : 'Not Ready'}
+                </span>
                 <Meter
                   innerRef={(el) => {
                     if (el) peerMeterRefs.current.set(peer.id, el);
@@ -507,16 +664,35 @@ export default function App() {
             ))}
           </ul>
         </div>
-        {playerId === hostId && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="absolute bottom-6 left-1/2 -translate-x-1/2 border border-primary bg-transparent text-primary hover:bg-primary/10"
-            onClick={handleStartGameClick}
-          >
-            Start Game
-          </Button>
-        )}
+        {/*
+          Not using the `disabled` attribute here - that adds pointer-events-none
+          (see button.tsx), which would also block the title tooltip from showing
+          on hover. A faded/blocked click is a no-op (handleStartGameClick has its
+          own guards too), and the server enforces host-only either way (see
+          server.js's roomHosts check).
+        */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn(
+            'absolute bottom-6 left-1/2 -translate-x-1/2 border border-primary bg-transparent text-primary hover:bg-primary/10',
+            (!isHost || (!gameActive && !allReady)) && 'opacity-40 hover:bg-transparent',
+          )}
+          onClick={() => {
+            if (!isHost) return;
+            if (gameActive) handleEndGameClick();
+            else handleStartGameClick();
+          }}
+          title={
+            !isHost
+              ? 'Only the host can start the game'
+              : !gameActive && !allReady
+                ? 'All players must be ready to start'
+                : undefined
+          }
+        >
+          {gameActive ? 'End Game' : 'Start Game'}
+        </Button>
       </>
     )}
     <div className="mx-auto w-full max-w-3xl space-y-4">
@@ -554,6 +730,24 @@ export default function App() {
                 {micDevices.map((device) => (
                   <SelectItem key={device.deviceId} value={device.deviceId}>
                     {device.label || `Microphone (${device.deviceId.slice(0, 8)})`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="settings-round-duration">Round length</Label>
+            <Select
+              value={String(roundDurationMin)}
+              onValueChange={(value) => setRoundDurationMin(Number(value) as RoundDurationMin)}
+            >
+              <SelectTrigger id="settings-round-duration" className="w-72">
+                <SelectValue placeholder="round length" />
+              </SelectTrigger>
+              <SelectContent>
+                {ROUND_DURATION_OPTIONS_MIN.map((minutes) => (
+                  <SelectItem key={minutes} value={String(minutes)}>
+                    {minutes} {minutes === 1 ? 'minute' : 'minutes'}
                   </SelectItem>
                 ))}
               </SelectContent>
