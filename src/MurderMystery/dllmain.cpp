@@ -12,7 +12,7 @@
 #include "MMTcpClient.h"
 
 // ============================================================
-// Murder Mystery v1.0
+// Murder Mystery v1.2
 // Elden Ring 1.17 Updated
 // ============================================================
 
@@ -176,6 +176,8 @@ namespace MM
 
     bool sheriffTrackedAlive[MAX_MM_PLAYERS]{};
     bool sheriffTrackedInitialized[MAX_MM_PLAYERS]{};
+    bool sheriffTargetWasInnocent[MAX_MM_PLAYERS]{};
+    bool sheriffTargetHitBySheriff[MAX_MM_PLAYERS]{};
 
     // --------------------------------------------------------
 
@@ -3900,6 +3902,9 @@ namespace MM
             {
                 sheriffTrackedAlive[i] = false;
                 sheriffTrackedInitialized[i] = false;
+
+                sheriffTargetWasInnocent[i] = false;
+                sheriffTargetHitBySheriff[i] = false;
             }
 
             Log(
@@ -5177,9 +5182,6 @@ namespace MM
                                 true);
                         }
 
-                        // TEMPORARY cleanup behavior can remain for now
-                        // if you still need it.
-                        RequestRoundCleanup();
                     }
 
                     lastAliveState = localPlayer.alive;
@@ -5257,14 +5259,40 @@ namespace MM
 
             if (currentRole == Role::Sheriff)
             {
-                for (int slot = 1; slot < MAX_MM_PLAYERS; ++slot)
+                for (int slot = 1;
+                    slot < MAX_MM_PLAYERS;
+                    ++slot)
                 {
                     PlayerState target{};
 
-                    if (!TryReadPlayerSlot(slot, target))
+                    if (!TryReadPlayerSlot(
+                        slot,
+                        target))
                     {
                         sheriffTrackedInitialized[slot] = false;
+                        sheriffTargetWasInnocent[slot] = false;
+                        sheriffTargetHitBySheriff[slot] = false;
+
                         continue;
+                    }
+
+                    // ----------------------------------------------------
+                    // Latch important information WHILE the target
+                    // still exists normally in multiplayer.
+                    // ----------------------------------------------------
+
+                    if (ChrInsHasSpEffect(
+                        target.chrIns,
+                        SPEFFECT_INNOCENT))
+                    {
+                        sheriffTargetWasInnocent[slot] = true;
+                    }
+
+                    if (ChrInsHasSpEffect(
+                        target.chrIns,
+                        SPEFFECT_SHERIFF_HIT_MARKER))
+                    {
+                        sheriffTargetHitBySheriff[slot] = true;
                     }
 
                     if (!sheriffTrackedInitialized[slot])
@@ -5284,18 +5312,21 @@ namespace MM
 
                     if (justDied)
                     {
-                        const bool wasInnocent =
-                            ChrInsHasSpEffect(
-                                target.chrIns,
-                                SPEFFECT_INNOCENT);
+                        Log(
+                            "[SHERIFF DEBUG] Target died. "
+                            "innocentLatched=" +
+                            std::string(
+                                sheriffTargetWasInnocent[slot]
+                                ? "YES"
+                                : "NO") +
+                            " sheriffHitLatched=" +
+                            std::string(
+                                sheriffTargetHitBySheriff[slot]
+                                ? "YES"
+                                : "NO"));
 
-                        const bool sheriffHit =
-                            ChrInsHasSpEffect(
-                                target.chrIns,
-                                500060);
-
-                        if (wasInnocent &&
-                            sheriffHit)
+                        if (sheriffTargetWasInnocent[slot] &&
+                            sheriffTargetHitBySheriff[slot])
                         {
                             ++sheriffWrongKills;
 
@@ -5307,8 +5338,6 @@ namespace MM
 
                             if (sheriffWrongKills == 1)
                             {
-                                // First mistake:
-                                // cap Sheriff at 50% max HP.
                                 PlayerState sheriff{};
 
                                 if (TryReadPlayerSlot(
@@ -5318,8 +5347,6 @@ namespace MM
                                     const int halfHp =
                                         (sheriff.maxHp + 1) / 2;
 
-                                    // Never heal Sheriff by applying
-                                    // the punishment.
                                     if (sheriff.hp > halfHp)
                                     {
                                         if (WritePlayerHp(
@@ -5335,13 +5362,27 @@ namespace MM
                             }
                             else
                             {
-                                // Second wrong Innocent kill:
-                                // use proven EMEVD death path.
                                 SetEventFlag(
                                     16009979,
                                     true);
                             }
                         }
+
+                        // Death consumed this victim's attribution.
+                        sheriffTargetWasInnocent[slot] = false;
+                        sheriffTargetHitBySheriff[slot] = false;
+                    }
+
+                    // If they are alive again, start with clean hit attribution.
+                    if (!sheriffTrackedAlive[slot] &&
+                        target.alive)
+                    {
+                        sheriffTargetWasInnocent[slot] =
+                            ChrInsHasSpEffect(
+                                target.chrIns,
+                                SPEFFECT_INNOCENT);
+
+                        sheriffTargetHitBySheriff[slot] = false;
                     }
 
                     sheriffTrackedAlive[slot] =
