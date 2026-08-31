@@ -218,6 +218,13 @@ namespace MM
         16009875;
 
     // --------------------------------------------------------
+    // tp to hub
+    // --------------------------------------------------------
+
+    constexpr uint32_t FLAG_RETURN_TO_HUB_REQUEST =
+        16009876;
+
+    // --------------------------------------------------------
 
     enum class Role
     {
@@ -4941,20 +4948,20 @@ namespace MM
             }
 
 
-            // F9 = turn Murderer event flag OFF
+            // F9 = return to Roundtable
             if (GetAsyncKeyState(VK_F9) & 1)
             {
                 if (SetEventFlag(
-                    16009991,
-                    false))
+                    FLAG_RETURN_TO_HUB_REQUEST,
+                    true))
                 {
                     Log(
-                        "[FLAG TEST] Set 16009991 OFF.");
+                        "[ROUND] F9 -> Return to Roundtable requested.");
                 }
                 else
                 {
                     Log(
-                        "[FLAG TEST] Failed to set 16009991 OFF.");
+                        "[ERROR] Failed to request return to Roundtable.");
                 }
             }
 
