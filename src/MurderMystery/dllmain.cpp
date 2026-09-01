@@ -203,27 +203,25 @@ namespace MM
     constexpr int32_t WEAPON_SLOT_TERTIARY = 2;
 
     // --------------------------------------------------------
-    // Result banner requests
+    // Local EMEVD request markers
     // --------------------------------------------------------
 
-    constexpr uint32_t FLAG_VICTORY_REQUEST =
-        16009872;
+    constexpr int32_t SPEFFECT_VICTORY_REQUEST =
+        500006;
 
-    constexpr uint32_t FLAG_DEFEAT_REQUEST =
-        16009873;
+    constexpr int32_t SPEFFECT_DEFEAT_REQUEST =
+        500007;
 
-    constexpr uint32_t FLAG_STALEMATE_REQUEST =
-        16009874;
+    constexpr int32_t SPEFFECT_STALEMATE_REQUEST =
+        500008;
 
-    constexpr uint32_t FLAG_COMMENCE_REQUEST =
-        16009875;
+    constexpr int32_t SPEFFECT_COMMENCE_REQUEST =
+        500009;
+
+    constexpr int32_t SPEFFECT_RETURN_TO_HUB_REQUEST =
+        500011;
 
     // --------------------------------------------------------
-    // tp to hub
-    // --------------------------------------------------------
-
-    constexpr uint32_t FLAG_RETURN_TO_HUB_REQUEST =
-        16009876;
 
     constexpr uint32_t FLAG_VOLCANO_LOADED =
         16009877;
@@ -2906,12 +2904,6 @@ namespace MM
 
         Log("[ROUND] Cleanup requested.");
 
-        // Make sure a player can never remain frozen
-        // during / after round cleanup.
-        RemoveSpEffectFromChrIns(
-            player,
-            SPEFFECT_ROUND_START_LOCK);
-
         // Immediate local state cleanup.
         UnequipMMTalismanEverywhere();
 
@@ -4185,16 +4177,41 @@ namespace MM
             // A player who returned naturally through death may have an
             // unconsumed return request from an older round. It must be
             // cleared before requesting the new Volcano spawn.
-            if (!SetEventFlag(
-                FLAG_RETURN_TO_HUB_REQUEST,
-                false))
+            // Clear local requests left by an older round.
+            const uintptr_t player =
+                GetLocalPlayerIns();
+
+            if (!player)
             {
                 Log(
-                    "[ERROR] Could not clear stale "
-                    "Roundtable return flag.");
+                    "[ERROR] StartGame could not find local player.");
 
                 return;
             }
+
+            RemoveSpEffectFromChrIns(
+                player,
+                SPEFFECT_RETURN_TO_HUB_REQUEST);
+
+            RemoveSpEffectFromChrIns(
+                player,
+                SPEFFECT_VICTORY_REQUEST);
+
+            RemoveSpEffectFromChrIns(
+                player,
+                SPEFFECT_DEFEAT_REQUEST);
+
+            RemoveSpEffectFromChrIns(
+                player,
+                SPEFFECT_STALEMATE_REQUEST);
+
+            RemoveSpEffectFromChrIns(
+                player,
+                SPEFFECT_COMMENCE_REQUEST);
+
+            RemoveSpEffectFromChrIns(
+                player,
+                SPEFFECT_ROUND_START_LOCK);
 
             // Remove the arrival signal left by the previous round.
             if (!SetEventFlag(
@@ -4321,34 +4338,44 @@ namespace MM
                 return;
             }
 
+            // Clear loading state before removing the lock. This prevents
+            // loading logic from applying 500005 again after Commence.
+            g_waitingForVolcanoLoad = false;
+            g_volcanoLoadReported = true;
+            g_roundActive = true;
+            g_playerDeathReported = false;
+
             const uintptr_t player =
                 GetLocalPlayerIns();
 
-            if (player)
+            if (!player)
             {
-                RemoveSpEffectFromChrIns(
-                    player,
-                    SPEFFECT_ROUND_START_LOCK);
-
                 Log(
-                    "[ROUND] Commence -> movement unlocked.");
+                    "[ERROR] Commence could not find local player.");
+
+                return;
             }
 
-            if (SetEventFlag(
-                FLAG_COMMENCE_REQUEST,
-                true))
-            {
-                g_roundActive = true;
-                g_playerDeathReported = false;
+            RemoveSpEffectFromChrIns(
+                player,
+                SPEFFECT_ROUND_START_LOCK);
 
+            Log(
+                "[ROUND] Commence -> loading state cleared and "
+                "movement unlocked.");
+
+            if (ApplySpEffectToChrIns(
+                player,
+                SPEFFECT_COMMENCE_REQUEST))
+            {
                 Log(
-                    "[ROUND] Commence requested for round=" +
+                    "[ROUND] Local Commence requested for round=" +
                     g_activeRoundId);
             }
             else
             {
                 Log(
-                    "[ERROR] Failed to request Commence banner.");
+                    "[ERROR] Failed to request local Commence banner.");
             }
         }
         else if (commandName == "SpawnItem")
@@ -4421,30 +4448,55 @@ namespace MM
                 return;
             }
 
-            uint32_t resultFlag = 0;
+            int32_t resultRequestSpEffect = 0;
 
             if (resultParam->second == "InnocentWin")
-                resultFlag = FLAG_VICTORY_REQUEST;
-            else if (resultParam->second == "MurdererWin")
-                resultFlag = FLAG_DEFEAT_REQUEST;
-            else if (resultParam->second == "Stalemate")
-                resultFlag = FLAG_STALEMATE_REQUEST;
-
-            if (resultFlag == 0)
             {
-                Log("[NET] RoundResult has invalid result: " + resultParam->second);
+                // DisplayBanner(TextBannerType.Victory)
+                // is customized as "Innocents Win".
+                resultRequestSpEffect =
+                    SPEFFECT_VICTORY_REQUEST;
+            }
+            else if (resultParam->second == "MurdererWin")
+            {
+                // DisplayBanner(TextBannerType.Defeat)
+                // is customized as "Murderer Wins".
+                resultRequestSpEffect =
+                    SPEFFECT_DEFEAT_REQUEST;
+            }
+            else if (resultParam->second == "Stalemate")
+            {
+                resultRequestSpEffect =
+                    SPEFFECT_STALEMATE_REQUEST;
+            }
+
+            if (resultRequestSpEffect == 0)
+            {
+                Log(
+                    "[NET] RoundResult has invalid result: " +
+                    resultParam->second);
+
                 return;
             }
 
             g_roundActive = false;
 
-            if (SetEventFlag(resultFlag, true))
+            const uintptr_t player =
+                GetLocalPlayerIns();
+
+            if (player &&
+                ApplySpEffectToChrIns(
+                    player,
+                    resultRequestSpEffect))
             {
-                Log("[ROUND] Result banner requested: " + resultParam->second);
+                Log(
+                    "[ROUND] Local result banner requested: " +
+                    resultParam->second);
             }
             else
             {
-                Log("[ERROR] Failed to request result banner.");
+                Log(
+                    "[ERROR] Failed to request local result banner.");
             }
         }
         else if (commandName == "EndGame")
@@ -4485,28 +4537,31 @@ namespace MM
 
             if (shouldReturnToHub)
             {
-                if (SetEventFlag(
-                    FLAG_RETURN_TO_HUB_REQUEST,
-                    true))
+                if (player &&
+                    ApplySpEffectToChrIns(
+                        player,
+                        SPEFFECT_RETURN_TO_HUB_REQUEST))
                 {
                     Log(
-                        "[NET] EndGame -> "
-                        "Return to Roundtable requested.");
+                        "[NET] EndGame -> Local return to "
+                        "Roundtable requested.");
                 }
                 else
                 {
                     Log(
                         "[ERROR] EndGame -> Failed to request "
-                        "return to Roundtable.");
+                        "local return to Roundtable.");
                 }
             }
             else
             {
-                // The player already returned naturally through death.
-                // Clear any older request instead of creating another one.
-                SetEventFlag(
-                    FLAG_RETURN_TO_HUB_REQUEST,
-                    false);
+                // A deceased player may already be in Roundtable.
+                if (player)
+                {
+                    RemoveSpEffectFromChrIns(
+                        player,
+                        SPEFFECT_RETURN_TO_HUB_REQUEST);
+                }
 
                 Log(
                     "[ROUND] EndGame cleanup completed; "
@@ -5388,49 +5443,46 @@ namespace MM
 
             if (GetAsyncKeyState(VK_F5) & 1)
             {
-                if (SetEventFlag(
-                    FLAG_VICTORY_REQUEST,
-                    true))
+                const uintptr_t player =
+                    GetLocalPlayerIns();
+
+                if (player &&
+                    ApplySpEffectToChrIns(
+                        player,
+                        SPEFFECT_VICTORY_REQUEST))
                 {
                     Log(
-                        "[BANNER TEST] F5 -> Victory requested.");
-                }
-                else
-                {
-                    Log(
-                        "[ERROR] Failed to request Victory banner.");
+                        "[BANNER TEST] F5 -> Local Victory requested.");
                 }
             }
 
             if (GetAsyncKeyState(VK_F6) & 1)
             {
-                if (SetEventFlag(
-                    FLAG_DEFEAT_REQUEST,
-                    true))
+                const uintptr_t player =
+                    GetLocalPlayerIns();
+
+                if (player &&
+                    ApplySpEffectToChrIns(
+                        player,
+                        SPEFFECT_DEFEAT_REQUEST))
                 {
                     Log(
-                        "[BANNER TEST] F6 -> Defeat requested.");
-                }
-                else
-                {
-                    Log(
-                        "[ERROR] Failed to request Defeat banner.");
+                        "[BANNER TEST] F6 -> Local Defeat requested.");
                 }
             }
 
             if (GetAsyncKeyState(VK_F7) & 1)
             {
-                if (SetEventFlag(
-                    FLAG_STALEMATE_REQUEST,
-                    true))
+                const uintptr_t player =
+                    GetLocalPlayerIns();
+
+                if (player &&
+                    ApplySpEffectToChrIns(
+                        player,
+                        SPEFFECT_STALEMATE_REQUEST))
                 {
                     Log(
-                        "[BANNER TEST] F7 -> Stalemate requested.");
-                }
-                else
-                {
-                    Log(
-                        "[ERROR] Failed to request Stalemate banner.");
+                        "[BANNER TEST] F7 -> Local Stalemate requested.");
                 }
             }
 
@@ -5438,17 +5490,16 @@ namespace MM
             // F8 = COMMENCE
             if (GetAsyncKeyState(VK_F8) & 1)
             {
-                if (SetEventFlag(
-                    FLAG_COMMENCE_REQUEST,
-                    true))
+                const uintptr_t player =
+                    GetLocalPlayerIns();
+
+                if (player &&
+                    ApplySpEffectToChrIns(
+                        player,
+                        SPEFFECT_COMMENCE_REQUEST))
                 {
                     Log(
-                        "[BANNER TEST] F8 -> Start requested.");
-                }
-                else
-                {
-                    Log(
-                        "[ERROR] Failed to request Start banner.");
+                        "[BANNER TEST] F8 -> Local Commence requested.");
                 }
             }
 
@@ -5466,9 +5517,10 @@ namespace MM
                         SPEFFECT_ROUND_START_LOCK);
                 }
 
-                if (SetEventFlag(
-                    FLAG_RETURN_TO_HUB_REQUEST,
-                    true))
+                if (player &&
+                    ApplySpEffectToChrIns(
+                        player,
+                        SPEFFECT_RETURN_TO_HUB_REQUEST))
                 {
                     Log(
                         "[ROUND] F9 -> Return to Roundtable requested.");

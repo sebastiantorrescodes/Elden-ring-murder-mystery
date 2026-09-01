@@ -33,8 +33,8 @@ interface PeerRow {
 }
 
 // Only one server in use - not something worth exposing as an editable field.
-// const SERVER_URL = 'wss://er-proximity-chat.duckdns.org'; // < og
-const SERVER_URL = 'ws://localhost:8080';
+const SERVER_URL = 'wss://er-proximity-chat.duckdns.org'; // < og
+// const SERVER_URL = 'ws://localhost:8080';
 
 // Murder Mystery needs exactly one Murderer and one Sheriff plus at least two
 // Innocents to be worth playing, and stops making sense past 6 for a single room.
