@@ -23,6 +23,8 @@ public:
     // reconnect if not currently connected, then appends any complete lines received
     // since the last call to outLines.
     void poll(std::vector<std::string>& outLines);
+    // Sends one newline-delimited event to the local Electron app.
+    bool sendLine(const std::string& line);
 
 private:
     bool tryConnect();

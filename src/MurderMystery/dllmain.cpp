@@ -224,6 +224,9 @@ namespace MM
     constexpr uint32_t FLAG_RETURN_TO_HUB_REQUEST =
         16009876;
 
+    constexpr uint32_t FLAG_VOLCANO_LOADED =
+        16009877;
+
     // --------------------------------------------------------
 
     enum class Role
@@ -315,9 +318,9 @@ namespace MM
     // (that's the only reliable "the player has left the lobby" signal we
     // have, since PlayerInMap is an EMEVD-only condition with no C++-side
     // equivalent) before granting the role at the Volcano Manor end.
-    Role g_pendingRole = Role::None;
-    uint32_t g_pendingRoleSpawnFlag = 0;
-    bool g_pendingRoleGrant = false;
+    std::string g_activeRoundId;
+    bool g_waitingForVolcanoLoad = false;
+    bool g_volcanoLoadReported = false;
 
     // --------------------------------------------------------
     // Native randomizer-style auto-equip
@@ -4056,7 +4059,7 @@ namespace MM
     // key=value line style the rest of this project's DLL<->app protocol already uses
     // (see dll-protocol.ts on the Electron side). Params past cmd= are optional and
     // command-specific (e.g. StartGame's role=).
-    void HandleNetworkLine(const std::string& line)
+    void HandleNetworkLine(const std::string& line,MMTcpClient& mmTcpClient)
     {
         constexpr const char* kCmdPrefix = "cmd=";
         constexpr size_t kCmdPrefixLen = 4;
@@ -4098,51 +4101,190 @@ namespace MM
         }
         else if (commandName == "StartGame")
         {
-            const auto roleParam = params.find("role");
+            const auto roundParam =
+                params.find("round");
+
+            const auto spawnParam =
+                params.find("spawn");
+
+            if (roundParam == params.end() ||
+                roundParam->second.empty() ||
+                spawnParam == params.end())
+            {
+                Log(
+                    "[NET] StartGame missing round/spawn params: " +
+                    line);
+
+                return;
+            }
+
+            int spawnIndex = 0;
+
+            try
+            {
+                spawnIndex =
+                    std::stoi(spawnParam->second);
+            }
+            catch (...)
+            {
+                Log(
+                    "[NET] StartGame invalid spawn param: " +
+                    line);
+
+                return;
+            }
+
+            if (spawnIndex < 1 ||
+                spawnIndex > 11)
+            {
+                Log(
+                    "[NET] StartGame spawn must be 1-11: " +
+                    std::to_string(spawnIndex));
+
+                return;
+            }
+
+            // Ignore a duplicate delivery for the current round.
+            if (g_activeRoundId == roundParam->second &&
+                g_waitingForVolcanoLoad)
+            {
+                Log(
+                    "[NET] Duplicate StartGame ignored for round=" +
+                    roundParam->second);
+
+                return;
+            }
+
+            // Remove the arrival signal left by the previous round.
+            if (!SetEventFlag(
+                FLAG_VOLCANO_LOADED,
+                false))
+            {
+                Log(
+                    "[ERROR] Could not clear Volcano loaded flag.");
+
+                return;
+            }
+
+            g_activeRoundId =
+                roundParam->second;
+
+            g_waitingForVolcanoLoad = true;
+            g_volcanoLoadReported = false;
+
+            // The server selects this index. Do not call
+            // RequestRandomSpawn() here.
+            if (!RequestSpawn(
+                spawnIndex))
+            {
+                Log(
+                    "[ERROR] StartGame failed to request spawn " +
+                    std::to_string(spawnIndex));
+
+                g_waitingForVolcanoLoad = false;
+                return;
+            }
+
+            Log(
+                "[ROUND] StartGame round=" +
+                g_activeRoundId +
+                " spawn=" +
+                std::to_string(spawnIndex));
+        }
+        else if (commandName == "SetRole")
+        {
+            const auto roundParam =
+                params.find("round");
+
+            const auto roleParam =
+                params.find("role");
+
+            if (roundParam == params.end() ||
+                roleParam == params.end())
+            {
+                Log(
+                    "[NET] SetRole missing round/role params: " +
+                    line);
+
+                return;
+            }
+
+            if (roundParam->second !=
+                g_activeRoundId)
+            {
+                Log(
+                    "[NET] Ignoring SetRole for stale round=" +
+                    roundParam->second);
+
+                return;
+            }
 
             Role role = Role::None;
-            if (roleParam != params.end())
+
+            if (roleParam->second == "Murderer")
             {
-                if (roleParam->second == "Murderer") role = Role::Murderer;
-                else if (roleParam->second == "Sheriff") role = Role::Sheriff;
-                else if (roleParam->second == "Innocent") role = Role::Innocent;
+                role = Role::Murderer;
+            }
+            else if (roleParam->second == "Sheriff")
+            {
+                role = Role::Sheriff;
+            }
+            else if (roleParam->second == "Innocent")
+            {
+                role = Role::Innocent;
             }
 
             if (role == Role::None)
             {
-                Log("[NET] StartGame missing/invalid role param: " + line);
+                Log(
+                    "[NET] SetRole invalid role: " +
+                    roleParam->second);
+
                 return;
             }
 
-            Log("[NET] StartGame role=" + roleParam->second);
-
-            // A resend of the same in-flight StartGame (relay retry, duplicate
-            // click, etc.) would otherwise re-roll RequestRandomSpawn() and
-            // overwrite g_pendingRoleSpawnFlag with a flag the warp event
-            // hasn't touched yet, orphaning the first TP with nothing left
-            // watching for its arrival. Only a role change supersedes a grant
-            // that's still pending.
-            if (g_pendingRoleGrant && g_pendingRole == role)
+            if (!SetLocalRole(role))
             {
-                Log("[NET] StartGame duplicate of pending grant - ignoring.");
+                Log(
+                    "[ERROR] SetRole failed for round=" +
+                    g_activeRoundId);
+
                 return;
             }
-
-            // Same random-warp mechanism as the F10 test hotkey, but role
-            // assignment is deferred - see g_pendingRoleGrant below. Applying
-            // it here, immediately, would grant the role wherever the player
-            // currently stands (e.g. still in Roundtable Hold), not once
-            // they've actually arrived at Volcano Manor.
-            uint32_t spawnFlagId = 0;
-            RequestRandomSpawn(&spawnFlagId);
-
-            g_pendingRole = role;
-            g_pendingRoleSpawnFlag = spawnFlagId;
-            g_pendingRoleGrant = true;
 
             Log(
-                "[ROLE] Deferred until arrival at Volcano Manor "
-                "(watching flag " + std::to_string(spawnFlagId) + ").");
+                "[ROLE] Server role applied: " +
+                roleParam->second);
+        }
+        else if (commandName == "Commence")
+        {
+            const auto roundParam =
+                params.find("round");
+
+            if (roundParam == params.end() ||
+                roundParam->second !=
+                    g_activeRoundId)
+            {
+                Log(
+                    "[NET] Ignoring Commence with invalid/stale round.");
+
+                return;
+            }
+
+            // Same action as the F8 test key.
+            if (SetEventFlag(
+                FLAG_COMMENCE_REQUEST,
+                true))
+            {
+                Log(
+                    "[ROUND] Commence requested for round=" +
+                    g_activeRoundId);
+            }
+            else
+            {
+                Log(
+                    "[ERROR] Failed to request Commence banner.");
+            }
         }
         else if (commandName == "EndGame")
         {
@@ -4428,7 +4570,7 @@ namespace MM
 
             for (const std::string& mmLine : mmLines)
             {
-                HandleNetworkLine(mmLine);
+                HandleNetworkLine(mmLine,mmTcpClient);
             }
 
             if (!g_gameDataManAddress)
@@ -4590,18 +4732,29 @@ namespace MM
             // go back OFF is a reliable "the player has landed at Volcano
             // Manor" signal - there's no PlayerInMap-equivalent memory read on
             // the C++ side to check this directly.
-            if (g_pendingRoleGrant)
+            if (g_waitingForVolcanoLoad &&
+                !g_volcanoLoadReported)
             {
-                bool spawnFlagStillSet = true;
+                bool volcanoLoaded = false;
 
-                if (GetEventFlag(g_pendingRoleSpawnFlag, spawnFlagStillSet) &&
-                    !spawnFlagStillSet)
+                if (GetEventFlag(
+                    FLAG_VOLCANO_LOADED,
+                    volcanoLoaded) &&
+                    volcanoLoaded)
                 {
-                    Log("[ROLE] Arrived at Volcano Manor - applying deferred role.");
+                    const std::string eventLine =
+                        "event=PlayerLoaded round=" +
+                        g_activeRoundId;
 
-                    if (SetLocalRole(g_pendingRole))
+                    if (mmTcpClient.sendLine(
+                        eventLine))
                     {
-                        g_pendingRoleGrant = false;
+                        Log(
+                            "[ROUND] Reported PlayerLoaded for round=" +
+                            g_activeRoundId);
+
+                        g_volcanoLoadReported = true;
+                        g_waitingForVolcanoLoad = false;
                     }
                 }
             }

@@ -14,6 +14,20 @@ contextBridge.exposeInMainWorld('dllBridge', {
     ipcRenderer.on('dll-status', listener);
     return () => ipcRenderer.removeListener('dll-status', listener);
   },
+  onMmEvent: (callback: (line: string) => void) => {
+  const listener = (
+    _event: Electron.IpcRendererEvent,
+    line: string,
+  ) => callback(line);
+
+  ipcRenderer.on('mm-event', listener);
+
+  return () =>
+    ipcRenderer.removeListener(
+      'mm-event',
+      listener,
+    );
+},
   sendCommand: (commandName: string, params?: Record<string, string>): Promise<boolean> =>
     ipcRenderer.invoke('mm-send-command', commandName, params),
 });
