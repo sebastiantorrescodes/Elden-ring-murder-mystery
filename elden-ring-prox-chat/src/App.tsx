@@ -573,13 +573,37 @@ export default function App() {
 
         if (
           (eventName === 'PlayerLoaded' ||
-            eventName === 'PlayerDied') &&
+            eventName === 'PlayerDied' ||
+            eventName === 'ItemPickedUp') &&
           roundId &&
           signalingRef.current
         ) {
+          const parsedIndex =
+            eventName === 'ItemPickedUp'
+              ? Number(values.get('index'))
+              : undefined;
+
+          if (
+            eventName === 'ItemPickedUp' &&
+            (
+              !Number.isInteger(parsedIndex) ||
+              parsedIndex === undefined ||
+              parsedIndex < 1 ||
+              parsedIndex > 10
+            )
+          ) {
+            console.warn(
+              '[mm-event] invalid item pickup index',
+              line,
+            );
+
+            return;
+          }
+
           signalingRef.current.sendGameEvent(
             eventName,
             roundId,
+            parsedIndex,
           );
         }
       });

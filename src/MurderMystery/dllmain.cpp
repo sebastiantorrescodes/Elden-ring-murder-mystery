@@ -323,7 +323,9 @@ namespace MM
     bool g_waitingForVolcanoLoad = false;
     bool g_volcanoLoadReported = false;
     bool g_roundActive = false;
+    bool g_volcanoItemCleanupRequested = false;
     bool g_playerDeathReported = false;
+    bool g_itemPointWasActive[10]{};
 
     // --------------------------------------------------------
     // Native randomizer-style auto-equip
@@ -1927,6 +1929,22 @@ namespace MM
         default:
             return false;
         }
+    }
+
+    uint32_t GetItemActiveFlag(
+        int spawnIndex)
+    {
+        if (spawnIndex < 1 ||
+            spawnIndex > 10)
+        {
+            return 0;
+        }
+
+        // Index 1 -> 16009861
+        // Index 10 -> 16009870
+        return 16009860u +
+            static_cast<uint32_t>(
+                spawnIndex);
     }
 
     bool RequestRandomItemSpawn()
@@ -4196,6 +4214,13 @@ namespace MM
             g_volcanoLoadReported = false;
             g_roundActive = false;
             g_playerDeathReported = false;
+            g_volcanoItemCleanupRequested = false;
+
+            for (bool& wasActive :
+                g_itemPointWasActive)
+            {
+                wasActive = false;
+            }
 
             // The server selects this index. Do not call
             // RequestRandomSpawn() here.
@@ -4324,6 +4349,63 @@ namespace MM
             {
                 Log(
                     "[ERROR] Failed to request Commence banner.");
+            }
+        }
+        else if (commandName == "SpawnItem")
+        {
+            const auto roundParam =
+                params.find("round");
+
+            const auto indexParam =
+                params.find("index");
+
+            if (roundParam == params.end() ||
+                indexParam == params.end() ||
+                roundParam->second != g_activeRoundId ||
+                !g_roundActive)
+            {
+                Log(
+                    "[NET] Ignoring SpawnItem with "
+                    "invalid/stale round.");
+
+                return;
+            }
+
+            int spawnIndex = 0;
+
+            try
+            {
+                spawnIndex =
+                    std::stoi(indexParam->second);
+            }
+            catch (...)
+            {
+                Log(
+                    "[NET] SpawnItem has invalid index.");
+
+                return;
+            }
+
+            if (spawnIndex < 1 ||
+                spawnIndex > 10)
+            {
+                Log(
+                    "[NET] SpawnItem index must be 1-10.");
+
+                return;
+            }
+
+            if (RequestItemSpawn(spawnIndex))
+            {
+                Log(
+                    "[ITEM] Server requested spawn index=" +
+                    std::to_string(spawnIndex));
+            }
+            else
+            {
+                Log(
+                    "[ERROR] Failed to request item spawn index=" +
+                    std::to_string(spawnIndex));
             }
         }
         else if (commandName == "RoundResult")
@@ -4891,19 +4973,67 @@ namespace MM
                             "movement locked while waiting for Commence.");
                     }
 
-                    const std::string eventLine =
-                        "event=PlayerLoaded round=" +
-                        g_activeRoundId;
-
-                    if (mmTcpClient.sendLine(
-                        eventLine))
+                    // Request cleanup only after Volcano Manor's EMEVD has
+                    // loaded. Event 16009970 consumes SpEffect 500050.
+                    if (!g_volcanoItemCleanupRequested)
                     {
-                        Log(
-                            "[ROUND] Reported PlayerLoaded for round=" +
-                            g_activeRoundId);
+                        if (RequestRoundCleanup())
+                        {
+                            g_volcanoItemCleanupRequested = true;
 
-                        g_volcanoLoadReported = true;
-                        g_waitingForVolcanoLoad = false;
+                            Log(
+                                "[ITEM] Volcano startup cleanup requested.");
+                        }
+                    }
+
+                    bool cleanupComplete =
+                        g_volcanoItemCleanupRequested &&
+                        !HasSpEffect(
+                            SPEFFECT_ROUND_CLEANUP_REQUEST);
+
+                    // Event 16009970 clears these shared flags after deleting
+                    // every local pickup presentation.
+                    for (int spawnIndex = 1;
+                        spawnIndex <= 10;
+                        ++spawnIndex)
+                    {
+                        const uint32_t activeFlag =
+                            GetItemActiveFlag(
+                                spawnIndex);
+
+                        bool isActive = false;
+
+                        if (!GetEventFlag(
+                            activeFlag,
+                            isActive) ||
+                            isActive)
+                        {
+                            cleanupComplete = false;
+                            break;
+                        }
+                    }
+
+                    // PlayerLoaded is now also an acknowledgement that this
+                    // client's old pickup state has been removed.
+                    if (cleanupComplete)
+                    {
+                        const std::string eventLine =
+                            "event=PlayerLoaded round=" +
+                            g_activeRoundId;
+
+                        if (mmTcpClient.sendLine(
+                            eventLine))
+                        {
+                            Log(
+                                "[ITEM] Volcano startup cleanup confirmed.");
+
+                            Log(
+                                "[ROUND] Reported PlayerLoaded for round=" +
+                                g_activeRoundId);
+
+                            g_volcanoLoadReported = true;
+                            g_waitingForVolcanoLoad = false;
+                        }
                     }
                 }
             }
@@ -5540,6 +5670,53 @@ namespace MM
             else
             {
                 mmTalismanWasEquipped = false;
+            }
+
+            if (g_roundActive)
+            {
+                for (int spawnIndex = 1;
+                    spawnIndex <= 10;
+                    ++spawnIndex)
+                {
+                    const uint32_t activeFlag =
+                        GetItemActiveFlag(
+                            spawnIndex);
+
+                    bool isActive = false;
+
+                    if (!GetEventFlag(
+                        activeFlag,
+                        isActive))
+                    {
+                        continue;
+                    }
+
+                    if (isActive)
+                    {
+                        g_itemPointWasActive[
+                            spawnIndex - 1] = true;
+                    }
+                    else if (g_itemPointWasActive[
+                        spawnIndex - 1])
+                    {
+                        const std::string eventLine =
+                            "event=ItemPickedUp round=" +
+                            g_activeRoundId +
+                            " index=" +
+                            std::to_string(spawnIndex);
+
+                        if (mmTcpClient.sendLine(
+                            eventLine))
+                        {
+                            g_itemPointWasActive[
+                                spawnIndex - 1] = false;
+
+                            Log(
+                                "[ITEM] Reported pickup index=" +
+                                std::to_string(spawnIndex));
+                        }
+                    }
+                }
             }
 
             PlayerState localPlayer{};
