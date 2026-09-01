@@ -4416,7 +4416,7 @@ namespace MM
 
         // Connects out to the local Electron app's command listener (see
         // dllmain.cpp/main.ts on the Electron side) - same lazy-connect-with-cooldown
-        // shape as SeamlessCoopExtension's TcpTestClient, just read-oriented instead
+        // shape as ProximityChatMod's TcpTestClient, just read-oriented instead
         // of write-oriented since this channel carries inbound commands.
         MMTcpClient mmTcpClient("127.0.0.1", 9192);
 

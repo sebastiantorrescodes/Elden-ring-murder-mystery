@@ -16,13 +16,12 @@ if (started) {
 // Must happen before app is ready - app.setPath has no effect after that.
 app.setPath('userData', path.join(app.getPath('temp'), 'elden-ring-prox-chat', `pid-${process.pid}`));
 
-// Same host/port and newline-delimited text protocol as quick-tcp-tester/tcp-test-listener.js.
 // The DLL is the TCP client here - it connects out to us and streams one reading per line.
 const DLL_TCP_HOST = '127.0.0.1';
 const DLL_TCP_PORT = 9191;
 
 // Reverse direction of the port above: MurderMystery.dll's MMTcpClient connects out to
-// this port the same way SeamlessCoopExtension's DLL connects to DLL_TCP_PORT, but
+// this port the same way ProximityChatMod's DLL connects to DLL_TCP_PORT, but
 // this channel carries commands (Electron -> DLL) instead of telemetry (DLL ->
 // Electron), so this side writes to the socket rather than only reading from it. Kept
 // on its own port instead of multiplexed onto DLL_TCP_PORT since the two DLLs and

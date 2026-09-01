@@ -6,7 +6,7 @@
 #include <cstdint>
 
 // Plain WSASocket TCP client that connects out to the local Electron app's command
-// listener, mirroring TcpTestClient.h/.cpp in SeamlessCoopExtension (connects lazily,
+// listener, mirroring TcpTestClient.h/.cpp in ProximityChatMod (connects lazily,
 // retries on a cooldown, never blocks the caller's poll loop). Unlike TcpTestClient,
 // this direction carries inbound commands rather than only outbound telemetry, so
 // poll() drains the socket non-blockingly and hands back whatever complete
