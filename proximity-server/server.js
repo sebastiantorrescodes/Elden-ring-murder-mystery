@@ -19,6 +19,9 @@ const MAX_ROUND_DURATION_MS = 10 * 60_000;
 const WIN_RESULT_DELAY_MS = 3_000;
 const RESULT_DISPLAY_MS = 6_000;
 
+const ITEM_SPAWN_INTERVAL_MS = 31_313;
+const ITEM_SPAWN_POINT_COUNT = 10;
+
 function isFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -208,6 +211,11 @@ function finishRound(roomId, result, reason) {
     round.activeTimer = null;
   }
 
+  if (round.itemSpawnTimer) {
+    clearInterval(round.itemSpawnTimer);
+    round.itemSpawnTimer = null;
+  }
+
   // Stop the gameplay timer immediately once a result has been
   // selected, even if its banner is intentionally delayed.
   broadcast(
@@ -291,6 +299,76 @@ function finishRound(roomId, result, reason) {
       WIN_RESULT_DELAY_MS,
     );
   }
+}
+
+function spawnRoundItem(roomId) {
+  const room = rooms.get(roomId);
+  const round = roomRounds.get(roomId);
+
+  if (
+    !room ||
+    !round ||
+    round.state !== 'ACTIVE' ||
+    round.roundEnded
+  ) {
+    return;
+  }
+
+  const availableIndexes = [];
+
+  for (
+    let index = 1;
+    index <= ITEM_SPAWN_POINT_COUNT;
+    index++
+  ) {
+    if (!round.occupiedItemPoints.has(index)) {
+      availableIndexes.push(index);
+    }
+  }
+
+  // Every location currently contains an unclaimed pickup.
+  if (availableIndexes.length === 0) {
+    console.log(
+      `[items] no available spawn points ` +
+      `room="${roomId}" round="${round.id}"`,
+    );
+    return;
+  }
+
+  const index =
+    availableIndexes[
+      crypto.randomInt(availableIndexes.length)
+    ];
+
+  // Reserve it before sending commands so another interval
+  // cannot choose the same point.
+  round.occupiedItemPoints.add(index);
+
+  // The EMEVD pickup uses a shared network-connected active
+  // flag, while each client creates its own local presentation.
+  // Send the request to every living participant so every
+  // loaded client receives the same pickup presentation.
+  for (const id of round.participantIds) {
+    if (
+      round.aliveByPlayerId.get(id) === true &&
+      room.has(id)
+    ) {
+      sendCommand(
+        room,
+        id,
+        'SpawnItem',
+        {
+          round: round.id,
+          index: String(index),
+        },
+      );
+    }
+  }
+
+  console.log(
+    `[items] spawned index=${index} ` +
+    `room="${roomId}" round="${round.id}"`,
+  );
 }
 
 function evaluateRoundState(roomId) {
@@ -620,6 +698,8 @@ wss.on('connection', (ws) => {
         activeTimer: null,
         resultTimer: null,
         endingTimer: null,
+        itemSpawnTimer: null,
+        occupiedItemPoints: new Set(),
       };
 
       roomRounds.set(
@@ -655,7 +735,8 @@ wss.on('connection', (ws) => {
     if (msg.type === 'game-event') {
       if (
         (msg.name !== 'PlayerLoaded' &&
-          msg.name !== 'PlayerDied') ||
+          msg.name !== 'PlayerDied' &&
+          msg.name !== 'ItemPickedUp') ||
         !isValidIdString(msg.roundId)
       ) {
         return;
@@ -673,6 +754,29 @@ wss.on('connection', (ws) => {
           `[game-event] ignored stale/invalid event ` +
           `from "${peerId}"`,
         );
+        return;
+      }
+
+      if (msg.name === 'ItemPickedUp') {
+        if (
+          round.state !== 'ACTIVE' ||
+          round.roundEnded ||
+          !Number.isInteger(msg.index) ||
+          msg.index < 1 ||
+          msg.index > ITEM_SPAWN_POINT_COUNT
+        ) {
+          return;
+        }
+
+        // Several clients may observe the shared flag turning OFF
+        // and report it. Deleting from a Set is safely idempotent.
+        if (round.occupiedItemPoints.delete(msg.index)) {
+          console.log(
+            `[items] picked up index=${msg.index} ` +
+            `room="${roomId}" round="${round.id}"`,
+          );
+        }
+
         return;
       }
 
@@ -748,6 +852,13 @@ wss.on('connection', (ws) => {
       round.activeTimer = setTimeout(
         () => finishRound(roomId, 'Stalemate', 'timer expired'),
         round.durationMs,
+      );
+
+      // The first item appears 30 seconds after Commence.
+      // Subsequent attempts happen every 30 seconds.
+      round.itemSpawnTimer = setInterval(
+        () => spawnRoundItem(roomId),
+        ITEM_SPAWN_INTERVAL_MS,
       );
 
       broadcast(

@@ -213,13 +213,20 @@ export class SignalingClient {
 
   // Reports a local DLL event to the round coordinator.
   sendGameEvent(
-    name: 'PlayerLoaded' | 'PlayerDied',
+    name:
+      | 'PlayerLoaded'
+      | 'PlayerDied'
+      | 'ItemPickedUp',
     roundId: string,
+    index?: number,
   ) {
     this.send({
       type: 'game-event',
       name,
       roundId,
+      ...(index !== undefined
+        ? { index }
+        : {}),
     });
   }
 
