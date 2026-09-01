@@ -133,6 +133,24 @@ const startMmCommandServer = () => {
     socket.setKeepAlive(true, 5000);
     mmSocket = socket;
 
+    let mmBuffer = '';
+
+    socket.on('data', (chunk) => {
+      mmBuffer += chunk.toString();
+
+      const lines = mmBuffer.split('\n');
+      mmBuffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+
+        if (trimmed.length > 0) {
+          logStatus(`[mm-server] received event: ${trimmed}`);
+          mainWindow?.webContents.send('mm-event', trimmed);
+        }
+      }
+    });
+
     socket.on('close', () => {
       logStatus('[mm-server] MurderMystery.dll disconnected');
       if (mmSocket === socket) {

@@ -105,6 +105,34 @@ bool MMTcpClient::tryConnect() {
     return true;
 }
 
+// gives the dll a path back to electron
+bool MMTcpClient::sendLine(const std::string& line) {
+    if (!connected && !tryConnect()) {
+        return false;
+    }
+
+    const std::string payload = line + "\n";
+    const int sent = send(
+        (SOCKET)sock,
+        payload.data(),
+        static_cast<int>(payload.size()),
+        0);
+
+    if (sent != static_cast<int>(payload.size())) {
+        const int err = WSAGetLastError();
+
+        MM::Log(
+            "[mm-tcp] send failed (" +
+            std::to_string(err) +
+            "), will reconnect");
+
+        closeSocket();
+        return false;
+    }
+
+    return true;
+}
+
 void MMTcpClient::poll(std::vector<std::string>& outLines) {
     if (!connected && !tryConnect()) {
         return;

@@ -10,6 +10,12 @@ const PORT = process.env.PORT || 8080;
 // its (server-generated, effectively unguessable) room code, not this secret too.
 const ROOM_SECRET = process.env.ROOM_SECRET || null;
 const MAX_ID_LENGTH = 64;
+const MIN_GAME_PLAYERS = 1;
+const MAX_GAME_PLAYERS = 6;
+const SPAWN_COUNT = 11;
+
+const MIN_ROUND_DURATION_MS = 60_000;
+const MAX_ROUND_DURATION_MS = 10 * 60_000;
 
 function isFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
@@ -54,6 +60,8 @@ const rooms = new Map();
 // room just has no host peer anymore ("Host" tag disappears client-side) rather than
 // promoting someone; keeps this simple until host migration is actually needed.
 const roomHosts = new Map();
+// roomCode -> active coordinated round
+const roomRounds = new Map();
 
 // Excludes visually-ambiguous characters (0/O, 1/I/L) - this code gets read off one
 // screen and typed into another, so a typo should just mean "room not found," not a
@@ -109,6 +117,37 @@ function broadcast(room, message, exceptWs) {
       send(peer.ws, message);
     }
   }
+}
+
+function shuffled(items) {
+  const result = [...items];
+
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(i + 1);
+    [result[i], result[j]] =
+      [result[j], result[i]];
+  }
+
+  return result;
+}
+
+function sendCommand(
+  room,
+  targetId,
+  name,
+  params,
+) {
+  const target = room.get(targetId);
+
+  if (!target) return false;
+
+  send(target.ws, {
+    type: 'command',
+    name,
+    params,
+  });
+
+  return true;
 }
 
 // Recomputes every pairwise distance/direction in the room and sends each peer its
@@ -294,6 +333,232 @@ wss.on('connection', (ws) => {
       return;
     }
 
+    if (msg.type === 'start-round') {
+      if (roomHosts.get(roomId) !== peerId) {
+        console.log(
+          `[start-round] rejected: "${peerId}" is not host`,
+        );
+        return;
+      }
+
+      if (roomRounds.has(roomId)) {
+        console.log(
+          `[start-round] rejected: room "${roomId}" already has a round`,
+        );
+        return;
+      }
+
+      if (
+        !isFiniteNumber(msg.durationMs) ||
+        msg.durationMs < MIN_ROUND_DURATION_MS ||
+        msg.durationMs > MAX_ROUND_DURATION_MS
+      ) {
+        console.log(
+          `[start-round] rejected: invalid duration`,
+        );
+        return;
+      }
+
+      const participantIds =
+        [...room.keys()];
+
+      if (
+        participantIds.length < MIN_GAME_PLAYERS ||
+        participantIds.length > MAX_GAME_PLAYERS ||
+        participantIds.length > SPAWN_COUNT
+      ) {
+        console.log(
+          `[start-round] rejected: invalid player count ` +
+          participantIds.length,
+        );
+        return;
+      }
+
+      const everyoneReady =
+        participantIds.every(
+          (id) => room.get(id)?.ready === true,
+        );
+
+      if (!everyoneReady) {
+        console.log(
+          `[start-round] rejected: not everyone is ready`,
+        );
+        return;
+      }
+
+      const roundId =
+        crypto.randomBytes(12).toString('hex');
+
+      const spawnIndexes =
+        shuffled(
+          Array.from(
+            { length: SPAWN_COUNT },
+            (_, index) => index + 1,
+          ),
+        );
+
+      const roleOrder =
+        shuffled(participantIds);
+
+      const spawnByPlayerId = new Map();
+      const roleByPlayerId = new Map();
+
+      participantIds.forEach((id, index) => {
+        spawnByPlayerId.set(
+          id,
+          spawnIndexes[index],
+        );
+      });
+
+      roleByPlayerId.set(
+        roleOrder[0],
+        'Murderer',
+      );
+
+      roleByPlayerId.set(
+        roleOrder[1],
+        'Sheriff',
+      );
+
+      for (let i = 2; i < roleOrder.length; i++) {
+        roleByPlayerId.set(
+          roleOrder[i],
+          'Innocent',
+        );
+      }
+
+      const round = {
+        id: roundId,
+        participantIds,
+        spawnByPlayerId,
+        roleByPlayerId,
+        loadedPlayerIds: new Set(),
+        durationMs: msg.durationMs,
+        commenced: false,
+      };
+
+      roomRounds.set(
+        roomId,
+        round,
+      );
+
+      for (const id of participantIds) {
+        sendCommand(
+          room,
+          id,
+          'StartGame',
+          {
+            round: roundId,
+            spawn: String(
+              spawnByPlayerId.get(id),
+            ),
+          },
+        );
+      }
+
+      console.log(
+        `[start-round] room="${roomId}" ` +
+        `round="${roundId}" ` +
+        `players=${participantIds.length}`,
+      );
+
+      return;
+    }
+
+    if (msg.type === 'game-event') {
+      if (
+        msg.name !== 'PlayerLoaded' ||
+        !isValidIdString(msg.roundId)
+      ) {
+        return;
+      }
+
+      const round =
+        roomRounds.get(roomId);
+
+      if (
+        !round ||
+        round.id !== msg.roundId ||
+        !round.participantIds.includes(peerId)
+      ) {
+        console.log(
+          `[game-event] ignored stale/invalid event ` +
+          `from "${peerId}"`,
+        );
+        return;
+      }
+
+      if (round.commenced) {
+        return;
+      }
+
+      round.loadedPlayerIds.add(
+        peerId,
+      );
+
+      console.log(
+        `[game-event] PlayerLoaded "${peerId}" ` +
+        `${round.loadedPlayerIds.size}/` +
+        `${round.participantIds.length}`,
+      );
+
+      if (
+        round.loadedPlayerIds.size !==
+        round.participantIds.length
+      ) {
+        return;
+      }
+
+      /// Mark the synchronization barrier complete before sending
+      // anything, preventing duplicate events from commencing twice.
+      round.commenced = true;
+
+      // Everyone is loaded. Assign roles first.
+      for (const id of round.participantIds) {
+        sendCommand(
+          room,
+          id,
+          'SetRole',
+          {
+            round: round.id,
+            role: round.roleByPlayerId.get(id),
+          },
+        );
+      }
+
+      // Then request the Commence banner.
+      for (const id of round.participantIds) {
+        sendCommand(
+          room,
+          id,
+          'Commence',
+          {
+            round: round.id,
+          },
+        );
+      }
+
+      // Start the shared timer only after role and Commence
+      // commands have been sent.
+      const endsAt =
+        Date.now() + round.durationMs;
+
+      broadcast(
+        room,
+        {
+          type: 'round-timer',
+          endsAt,
+        },
+      );
+
+      console.log(
+        `[round] commenced room="${roomId}" ` +
+        `round="${round.id}" endsAt=${endsAt}`,
+      );
+
+      return;
+    }
+
     if (msg.type === 'round-timer') {
       // Same trust boundary as 'command' below - only the host starts/clears the
       // round timer, and it's broadcast (not per-target) since every player needs
@@ -320,6 +585,9 @@ wss.on('connection', (ws) => {
         return;
       }
       if (msg.params !== undefined && !isValidParams(msg.params)) return;
+      if (msg.name === 'EndGame') {
+        roomRounds.delete(roomId);
+      }
       const target = room.get(msg.to);
       if (target) {
         send(target.ws, { type: 'command', name: msg.name, params: msg.params });
@@ -337,6 +605,7 @@ wss.on('connection', (ws) => {
     if (room.size === 0) {
       rooms.delete(roomId);
       roomHosts.delete(roomId);
+      roomRounds.delete(roomId);
     } else {
       broadcast(room, { type: 'peer-left', id: peerId });
     }

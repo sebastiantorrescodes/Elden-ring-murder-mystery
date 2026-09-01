@@ -434,14 +434,17 @@ export default function App() {
   // Fisher-Yates - Math.random()-based .sort() comparators are a common shortcut but
   // don't actually produce a uniform shuffle, and fairness is the whole point of
   // randomly picking who's the Murderer.
-  function shuffled<T>(items: T[]): T[] {
-    const result = [...items];
-    for (let i = result.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [result[i], result[j]] = [result[j], result[i]];
-    }
-    return result;
-  }
+
+  // unused supposedly
+
+  // function shuffled<T>(items: T[]): T[] {
+  //   const result = [...items];
+  //   for (let i = result.length - 1; i > 0; i--) {
+  //     const j = Math.floor(Math.random() * (i + 1));
+  //     [result[i], result[j]] = [result[j], result[i]];
+  //   }
+  //   return result;
+  // }
 
   // Toggles this player's own ready-up state - anyone in the room can do this,
   // not just the host (unlike Start/End Game below).
@@ -456,34 +459,38 @@ export default function App() {
   const handleStartGameClick = () => {
     if (!signalingRef.current || gameActive) return;
 
-    const allPlayerIds = shuffled([playerId, ...peers.map((peer) => peer.id)]);
-    if (allPlayerIds.length < MIN_GAME_PLAYERS || allPlayerIds.length > MAX_GAME_PLAYERS) {
-      setStatus(`need ${MIN_GAME_PLAYERS}-${MAX_GAME_PLAYERS} players to start (currently ${allPlayerIds.length})`);
+    const playerCount = 1 + peers.length;
+
+    if (
+      playerCount < MIN_GAME_PLAYERS ||
+      playerCount > MAX_GAME_PLAYERS
+    ) {
+      setStatus(
+        `need ${MIN_GAME_PLAYERS}-${MAX_GAME_PLAYERS} players ` +
+        `to start (currently ${playerCount})`,
+      );
       return;
     }
 
-    if (!myReady || peers.some((peer) => !peer.ready)) {
-      setStatus('all players must be ready to start');
+    if (
+      !myReady ||
+      peers.some((peer) => !peer.ready)
+    ) {
+      setStatus(
+        'all players must be ready to start',
+      );
       return;
     }
 
-    const roleByPlayerId = new Map<string, 'Murderer' | 'Sheriff' | 'Innocent'>();
-    roleByPlayerId.set(allPlayerIds[0], 'Murderer');
-    if (allPlayerIds.length > 1) roleByPlayerId.set(allPlayerIds[1], 'Sheriff');
-    for (let i = 2; i < allPlayerIds.length; i++) {
-      roleByPlayerId.set(allPlayerIds[i], 'Innocent');
-    }
+    signalingRef.current.sendStartRound(
+      roundDurationMin * 60_000,
+    );
 
-    // Sent to every player including this one (the relay round-trips back through
-    // the server the same way for the host as for anyone else - see server.js's
-    // 'command' handler forwarding to room.get(msg.to) regardless of who msg.to is),
-    // so the host's own MurderMystery.dll gets the exact same StartGame treatment.
-    for (const [id, role] of roleByPlayerId) {
-      signalingRef.current.sendCommand(id, 'StartGame', { role });
-    }
-
-    signalingRef.current.sendRoundTimer(Date.now() + roundDurationMin * 60_000);
+    // Prevent repeated clicks while the server waits for every
+    // participant to load. The actual timer remains null until
+    // the server broadcasts it after Commence.
     setGameActive(true);
+    setStatus('waiting for all players to load...');
   };
 
   // Sends everyone (including the host) back to the Roundtable - same
@@ -540,6 +547,40 @@ export default function App() {
     const unsubscribeStatus = window.dllBridge.onStatus((message) => {
       console.log(message);
     });
+
+    const unsubscribeMmEvent =
+      window.dllBridge.onMmEvent((line) => {
+        console.log('[mm-event]', line);
+
+        const tokens = line.trim().split(/\s+/);
+        const values = new Map<string, string>();
+
+        for (const token of tokens) {
+          const separator = token.indexOf('=');
+
+          if (separator > 0) {
+            values.set(
+              token.slice(0, separator),
+              token.slice(separator + 1),
+            );
+          }
+        }
+
+        const eventName = values.get('event');
+        const roundId = values.get('round');
+
+        if (
+          eventName === 'PlayerLoaded' &&
+          roundId &&
+          signalingRef.current
+        ) {
+          signalingRef.current.sendGameEvent(
+            'PlayerLoaded',
+            roundId,
+          );
+        }
+      });
+    
     const unsubscribeReading = window.dllBridge.onReading((line) => {
       console.log('[dll]', line);
 
@@ -582,6 +623,7 @@ export default function App() {
     return () => {
       unsubscribeStatus();
       unsubscribeReading();
+      unsubscribeMmEvent();
     };
   }, []);
 

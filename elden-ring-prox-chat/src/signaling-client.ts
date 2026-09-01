@@ -193,6 +193,26 @@ export class SignalingClient {
     this.send({ type: 'ready', ready });
   }
 
+  // Host asks the server to begin a coordinated round.
+  sendStartRound(durationMs: number) {
+    this.send({
+      type: 'start-round',
+      durationMs,
+    });
+  }
+
+  // Reports a local DLL event to the round coordinator.
+  sendGameEvent(
+    name: 'PlayerLoaded',
+    roundId: string,
+  ) {
+    this.send({
+      type: 'game-event',
+      name,
+      roundId,
+    });
+  }
+
   // Only takes effect server-side if this client is the room's host - see server.js.
   sendRoundTimer(endsAt: number | null) {
     this.send({ type: 'round-timer', endsAt });
