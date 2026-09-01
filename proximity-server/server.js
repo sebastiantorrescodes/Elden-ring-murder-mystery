@@ -16,6 +16,8 @@ const SPAWN_COUNT = 11;
 
 const MIN_ROUND_DURATION_MS = 60_000;
 const MAX_ROUND_DURATION_MS = 10 * 60_000;
+const WIN_RESULT_DELAY_MS = 3_000;
+const RESULT_DISPLAY_MS = 6_000;
 
 function isFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
@@ -148,6 +150,177 @@ function sendCommand(
   });
 
   return true;
+}
+
+function broadcastRoundState(room, state, result) {
+  broadcast(room, {
+    type: 'round-state',
+    state,
+    ...(result ? { result } : {}),
+  });
+}
+
+function resetRoomToWaiting(roomId, expectedRoundId) {
+  const room = rooms.get(roomId);
+  const round = roomRounds.get(roomId);
+
+  if (!room || !round || round.id !== expectedRoundId) return;
+
+  for (const id of round.participantIds) {
+    const shouldReturnToHub =
+      round.aliveByPlayerId.get(id) !== false;
+
+    sendCommand(
+      room,
+      id,
+      'EndGame',
+      {
+        round: round.id,
+        returnToHub:
+          shouldReturnToHub ? '1' : '0',
+      },
+    );
+  }
+
+  for (const [id, peer] of room) {
+    peer.ready = false;
+    broadcast(room, { type: 'peer-ready', id, ready: false });
+  }
+
+  broadcast(room, { type: 'round-timer', endsAt: null });
+  broadcastRoundState(room, 'WAITING');
+  roomRounds.delete(roomId);
+
+  console.log(`[round] reset room="${roomId}" round="${expectedRoundId}"`);
+}
+
+function finishRound(roomId, result, reason) {
+  const room = rooms.get(roomId);
+  const round = roomRounds.get(roomId);
+
+  if (!room || !round || round.roundEnded) return;
+
+  round.roundEnded = true;
+  round.state = 'ENDING';
+
+  if (round.activeTimer) {
+    clearTimeout(round.activeTimer);
+    round.activeTimer = null;
+  }
+
+  // Stop the gameplay timer immediately once a result has been
+  // selected, even if its banner is intentionally delayed.
+  broadcast(
+    room,
+    {
+      type: 'round-timer',
+      endsAt: null,
+    },
+  );
+
+  // Tell clients gameplay has ended, but do not reveal the result
+  // until the banner is actually sent.
+  broadcastRoundState(
+    room,
+    'ENDING',
+  );
+
+  console.log(
+    `[round] ending room="${roomId}" round="${round.id}" ` +
+    `result=${result} reason=${reason}`,
+  );
+
+  const showResult = () => {
+    // Make sure this callback still belongs to the same round.
+    const currentRound =
+      roomRounds.get(roomId);
+
+    if (
+      !currentRound ||
+      currentRound.id !== round.id
+    ) {
+      return;
+    }
+
+    for (const id of round.participantIds) {
+      sendCommand(
+        room,
+        id,
+        'RoundResult',
+        {
+          round: round.id,
+          result,
+        },
+      );
+    }
+
+    broadcastRoundState(
+      room,
+      'ENDING',
+      result,
+    );
+
+    console.log(
+      `[round] result banner sent ` +
+      `room="${roomId}" round="${round.id}" ` +
+      `result=${result}`,
+    );
+
+    // Keep the banner visible for ten seconds before returning
+    // everyone to Roundtable.
+    round.endingTimer = setTimeout(
+      () => {
+        round.endingTimer = null;
+
+        resetRoomToWaiting(
+          roomId,
+          round.id,
+        );
+      },
+      RESULT_DISPLAY_MS,
+    );
+  };
+
+  // Kill-based wins wait five seconds. Timer expiration and a
+  // host-requested ending show Stalemate immediately.
+  if (result === 'Stalemate') {
+    showResult();
+  } else {
+    round.resultTimer = setTimeout(
+      showResult,
+      WIN_RESULT_DELAY_MS,
+    );
+  }
+}
+
+function evaluateRoundState(roomId) {
+  const round = roomRounds.get(roomId);
+
+  if (!round || round.state !== 'ACTIVE' || round.roundEnded) return;
+
+  const murdererId = round.participantIds.find(
+    (id) => round.roleByPlayerId.get(id) === 'Murderer',
+  );
+
+  if (!murdererId) {
+    finishRound(roomId, 'Stalemate', 'missing murderer');
+    return;
+  }
+
+  if (round.aliveByPlayerId.get(murdererId) === false) {
+    finishRound(roomId, 'InnocentWin', 'murderer died');
+    return;
+  }
+
+  const anyNonMurdererAlive = round.participantIds.some(
+    (id) =>
+      id !== murdererId &&
+      round.aliveByPlayerId.get(id) === true,
+  );
+
+  if (!anyNonMurdererAlive) {
+    finishRound(roomId, 'MurdererWin', 'all non-murderers died');
+  }
 }
 
 // Recomputes every pairwise distance/direction in the room and sends each peer its
@@ -415,10 +588,14 @@ wss.on('connection', (ws) => {
         'Murderer',
       );
 
-      roleByPlayerId.set(
-        roleOrder[1],
-        'Sheriff',
-      );
+      // The one-player configuration is retained only for local pipeline
+      // testing. Real rounds use MIN_GAME_PLAYERS=2 and always get a Sheriff.
+      if (roleOrder.length >= 2) {
+        roleByPlayerId.set(
+          roleOrder[1],
+          'Sheriff',
+        );
+      }
 
       for (let i = 2; i < roleOrder.length; i++) {
         roleByPlayerId.set(
@@ -429,18 +606,28 @@ wss.on('connection', (ws) => {
 
       const round = {
         id: roundId,
+        state: 'LOADING',
         participantIds,
         spawnByPlayerId,
         roleByPlayerId,
         loadedPlayerIds: new Set(),
         durationMs: msg.durationMs,
         commenced: false,
+        roundEnded: false,
+        aliveByPlayerId: new Map(
+          participantIds.map((id) => [id, true]),
+        ),
+        activeTimer: null,
+        resultTimer: null,
+        endingTimer: null,
       };
 
       roomRounds.set(
         roomId,
         round,
       );
+
+      broadcastRoundState(room, 'LOADING');
 
       for (const id of participantIds) {
         sendCommand(
@@ -467,7 +654,8 @@ wss.on('connection', (ws) => {
 
     if (msg.type === 'game-event') {
       if (
-        msg.name !== 'PlayerLoaded' ||
+        (msg.name !== 'PlayerLoaded' &&
+          msg.name !== 'PlayerDied') ||
         !isValidIdString(msg.roundId)
       ) {
         return;
@@ -488,7 +676,17 @@ wss.on('connection', (ws) => {
         return;
       }
 
-      if (round.commenced) {
+      if (msg.name === 'PlayerDied') {
+        if (round.state !== 'ACTIVE' || round.roundEnded) return;
+        if (round.aliveByPlayerId.get(peerId) === false) return;
+
+        round.aliveByPlayerId.set(peerId, false);
+        console.log(`[game-event] PlayerDied "${peerId}" round="${round.id}"`);
+        evaluateRoundState(roomId);
+        return;
+      }
+
+      if (round.commenced || round.state !== 'LOADING') {
         return;
       }
 
@@ -512,6 +710,8 @@ wss.on('connection', (ws) => {
       /// Mark the synchronization barrier complete before sending
       // anything, preventing duplicate events from commencing twice.
       round.commenced = true;
+      round.state = 'STARTING';
+      broadcastRoundState(room, 'STARTING');
 
       // Everyone is loaded. Assign roles first.
       for (const id of round.participantIds) {
@@ -543,6 +743,13 @@ wss.on('connection', (ws) => {
       const endsAt =
         Date.now() + round.durationMs;
 
+      round.state = 'ACTIVE';
+      round.endsAt = endsAt;
+      round.activeTimer = setTimeout(
+        () => finishRound(roomId, 'Stalemate', 'timer expired'),
+        round.durationMs,
+      );
+
       broadcast(
         room,
         {
@@ -551,11 +758,23 @@ wss.on('connection', (ws) => {
         },
       );
 
+      broadcastRoundState(room, 'ACTIVE');
+
       console.log(
         `[round] commenced room="${roomId}" ` +
         `round="${round.id}" endsAt=${endsAt}`,
       );
 
+      return;
+    }
+
+    if (msg.type === 'end-round') {
+      if (roomHosts.get(roomId) !== peerId) {
+        console.log(`[end-round] rejected: "${peerId}" is not host`);
+        return;
+      }
+
+      finishRound(roomId, 'Stalemate', 'host ended round');
       return;
     }
 
@@ -585,9 +804,6 @@ wss.on('connection', (ws) => {
         return;
       }
       if (msg.params !== undefined && !isValidParams(msg.params)) return;
-      if (msg.name === 'EndGame') {
-        roomRounds.delete(roomId);
-      }
       const target = room.get(msg.to);
       if (target) {
         send(target.ws, { type: 'command', name: msg.name, params: msg.params });
@@ -600,6 +816,11 @@ wss.on('connection', (ws) => {
     if (!roomId || !peerId) return;
     const room = rooms.get(roomId);
     if (!room) return;
+    const activeRound = roomRounds.get(roomId);
+    const participantDisconnected =
+      activeRound?.participantIds.includes(peerId) &&
+      !activeRound.roundEnded;
+
     room.delete(peerId);
     console.log(`[leave] ${peerId} left room "${roomId}" (${room.size} remaining)`);
     if (room.size === 0) {
@@ -608,6 +829,9 @@ wss.on('connection', (ws) => {
       roomRounds.delete(roomId);
     } else {
       broadcast(room, { type: 'peer-left', id: peerId });
+      if (participantDisconnected) {
+        finishRound(roomId, 'Stalemate', 'participant disconnected');
+      }
     }
   });
 });

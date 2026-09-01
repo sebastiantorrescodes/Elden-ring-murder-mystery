@@ -34,6 +34,11 @@ interface RoundTimerMessage {
   type: 'round-timer';
   endsAt: number | null;
 }
+interface RoundStateMessage {
+  type: 'round-state';
+  state: 'LOADING' | 'STARTING' | 'ACTIVE' | 'ENDING' | 'WAITING';
+  result?: 'InnocentWin' | 'MurdererWin' | 'Stalemate';
+}
 // relX/Y/Z are the peer's position already rotated into the listener's own facing
 // frame server-side (see proximity.js's computeRelativeOffset) - feed straight into
 // a PannerNode's position, no further rotation needed on this end.
@@ -67,6 +72,7 @@ type ServerMessage =
   | PeerLeftMessage
   | PeerReadyMessage
   | RoundTimerMessage
+  | RoundStateMessage
   | VolumesMessage
   | SignalMessage
   | CommandMessage;
@@ -87,6 +93,7 @@ export interface SignalingClientOptions {
   onPeerLeft?: (id: PeerId) => void;
   onPeerReady?: (id: PeerId, ready: boolean) => void;
   onRoundTimer?: (endsAt: number | null) => void;
+  onRoundState?: (state: RoundStateMessage['state'], result?: RoundStateMessage['result']) => void;
   onVolumes?: (volumes: Record<PeerId, PeerVolume>) => void;
   onSignal?: (from: PeerId, data: unknown) => void;
   onCommand?: (name: string, params?: Record<string, string>) => void;
@@ -137,6 +144,9 @@ export class SignalingClient {
         break;
       case 'round-timer':
         this.options.onRoundTimer?.(msg.endsAt);
+        break;
+      case 'round-state':
+        this.options.onRoundState?.(msg.state, msg.result);
         break;
       case 'volumes':
         this.options.onVolumes?.(msg.volumes);
@@ -203,7 +213,7 @@ export class SignalingClient {
 
   // Reports a local DLL event to the round coordinator.
   sendGameEvent(
-    name: 'PlayerLoaded',
+    name: 'PlayerLoaded' | 'PlayerDied',
     roundId: string,
   ) {
     this.send({
@@ -211,6 +221,10 @@ export class SignalingClient {
       name,
       roundId,
     });
+  }
+
+  sendEndRound() {
+    this.send({ type: 'end-round' });
   }
 
   // Only takes effect server-side if this client is the room's host - see server.js.

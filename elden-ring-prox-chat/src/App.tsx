@@ -33,7 +33,8 @@ interface PeerRow {
 }
 
 // Only one server in use - not something worth exposing as an editable field.
-const SERVER_URL = 'wss://er-proximity-chat.duckdns.org';
+// const SERVER_URL = 'wss://er-proximity-chat.duckdns.org'; // < og
+const SERVER_URL = 'ws://localhost:8080';
 
 // Murder Mystery needs exactly one Murderer and one Sheriff plus at least two
 // Innocents to be worth playing, and stops making sense past 6 for a single room.
@@ -385,6 +386,22 @@ export default function App() {
         syncPeerRows();
       },
       onRoundTimer: (endsAt) => setRoundEndsAt(endsAt),
+      onRoundState: (state, result) => {
+        if (state === 'LOADING') {
+          setGameActive(true);
+          setStatus('waiting for all players to load...');
+        } else if (state === 'STARTING') {
+          setStatus('assigning roles...');
+        } else if (state === 'ACTIVE') {
+          setGameActive(true);
+          setStatus('round active');
+        } else if (state === 'ENDING') {
+          setStatus(`round ended: ${result ?? 'Stalemate'}`);
+        } else if (state === 'WAITING') {
+          setGameActive(false);
+          setStatus('returned to lobby');
+        }
+      },
       onVolumes: (volumes) => {
         for (const [peerId, v] of Object.entries(volumes)) {
           meshRef.current?.setGain(peerId, v.gain);
@@ -501,12 +518,8 @@ export default function App() {
   const handleEndGameClick = () => {
     if (!signalingRef.current) return;
 
-    for (const id of [playerId, ...peers.map((peer) => peer.id)]) {
-      signalingRef.current.sendCommand(id, 'EndGame');
-    }
-
-    signalingRef.current.sendRoundTimer(null);
-    setGameActive(false);
+    signalingRef.current.sendEndRound();
+    setStatus('ending round...');
   };
 
   // Countdown re-render tick - only runs while a round timer is active, and
@@ -522,17 +535,6 @@ export default function App() {
   }, [roundEndsAt]);
 
   const remainingMs = roundEndsAt === null ? null : Math.max(0, roundEndsAt - nowTick);
-
-  // Host-side auto-end: everyone's countdown reaches 0 in lockstep (same shared
-  // roundEndsAt), but only the host actually has permission to send the EndGame
-  // command server-side (see server.js's roomHosts check), so only the host's
-  // client acts on it. Fires exactly once - handleEndGameClick sets gameActive to
-  // false, which stops this condition from being true again on the next render.
-  useEffect(() => {
-    if (remainingMs === 0 && isHost && gameActive) {
-      handleEndGameClick();
-    }
-  }, [remainingMs, isHost, gameActive]);
 
   const handleCopyRoomCode = () => {
     if (!activeRoomCode) return;
@@ -570,12 +572,13 @@ export default function App() {
         const roundId = values.get('round');
 
         if (
-          eventName === 'PlayerLoaded' &&
+          (eventName === 'PlayerLoaded' ||
+            eventName === 'PlayerDied') &&
           roundId &&
           signalingRef.current
         ) {
           signalingRef.current.sendGameEvent(
-            'PlayerLoaded',
+            eventName,
             roundId,
           );
         }

@@ -165,6 +165,7 @@ namespace MM
     constexpr int32_t SPEFFECT_SHERIFF = 500001;
     constexpr int32_t SPEFFECT_INNOCENT = 500002;
     constexpr int32_t SPEFFECT_BOOTSTRAP = 500003;
+    constexpr int32_t SPEFFECT_ROUND_START_LOCK = 500005;
 
     // --------------------------------------------------------
     // Sheriff punishment logic
@@ -321,6 +322,8 @@ namespace MM
     std::string g_activeRoundId;
     bool g_waitingForVolcanoLoad = false;
     bool g_volcanoLoadReported = false;
+    bool g_roundActive = false;
+    bool g_playerDeathReported = false;
 
     // --------------------------------------------------------
     // Native randomizer-style auto-equip
@@ -2885,6 +2888,12 @@ namespace MM
 
         Log("[ROUND] Cleanup requested.");
 
+        // Make sure a player can never remain frozen
+        // during / after round cleanup.
+        RemoveSpEffectFromChrIns(
+            player,
+            SPEFFECT_ROUND_START_LOCK);
+
         // Immediate local state cleanup.
         UnequipMMTalismanEverywhere();
 
@@ -4155,6 +4164,20 @@ namespace MM
                 return;
             }
 
+            // A player who returned naturally through death may have an
+            // unconsumed return request from an older round. It must be
+            // cleared before requesting the new Volcano spawn.
+            if (!SetEventFlag(
+                FLAG_RETURN_TO_HUB_REQUEST,
+                false))
+            {
+                Log(
+                    "[ERROR] Could not clear stale "
+                    "Roundtable return flag.");
+
+                return;
+            }
+
             // Remove the arrival signal left by the previous round.
             if (!SetEventFlag(
                 FLAG_VOLCANO_LOADED,
@@ -4171,6 +4194,8 @@ namespace MM
 
             g_waitingForVolcanoLoad = true;
             g_volcanoLoadReported = false;
+            g_roundActive = false;
+            g_playerDeathReported = false;
 
             // The server selects this index. Do not call
             // RequestRandomSpawn() here.
@@ -4271,11 +4296,26 @@ namespace MM
                 return;
             }
 
-            // Same action as the F8 test key.
+            const uintptr_t player =
+                GetLocalPlayerIns();
+
+            if (player)
+            {
+                RemoveSpEffectFromChrIns(
+                    player,
+                    SPEFFECT_ROUND_START_LOCK);
+
+                Log(
+                    "[ROUND] Commence -> movement unlocked.");
+            }
+
             if (SetEventFlag(
                 FLAG_COMMENCE_REQUEST,
                 true))
             {
+                g_roundActive = true;
+                g_playerDeathReported = false;
+
                 Log(
                     "[ROUND] Commence requested for round=" +
                     g_activeRoundId);
@@ -4286,16 +4326,109 @@ namespace MM
                     "[ERROR] Failed to request Commence banner.");
             }
         }
-        else if (commandName == "EndGame")
+        else if (commandName == "RoundResult")
         {
-            // Same flag as the F9 test hotkey - see FLAG_RETURN_TO_HUB_REQUEST below.
-            if (SetEventFlag(FLAG_RETURN_TO_HUB_REQUEST, true))
+            const auto roundParam = params.find("round");
+            const auto resultParam = params.find("result");
+
+            if (roundParam == params.end() ||
+                resultParam == params.end() ||
+                roundParam->second != g_activeRoundId)
             {
-                Log("[NET] EndGame -> Return to Roundtable requested.");
+                Log("[NET] Ignoring RoundResult with invalid/stale round.");
+                return;
+            }
+
+            uint32_t resultFlag = 0;
+
+            if (resultParam->second == "InnocentWin")
+                resultFlag = FLAG_VICTORY_REQUEST;
+            else if (resultParam->second == "MurdererWin")
+                resultFlag = FLAG_DEFEAT_REQUEST;
+            else if (resultParam->second == "Stalemate")
+                resultFlag = FLAG_STALEMATE_REQUEST;
+
+            if (resultFlag == 0)
+            {
+                Log("[NET] RoundResult has invalid result: " + resultParam->second);
+                return;
+            }
+
+            g_roundActive = false;
+
+            if (SetEventFlag(resultFlag, true))
+            {
+                Log("[ROUND] Result banner requested: " + resultParam->second);
             }
             else
             {
-                Log("[ERROR] EndGame -> Failed to request return to Roundtable.");
+                Log("[ERROR] Failed to request result banner.");
+            }
+        }
+        else if (commandName == "EndGame")
+        {
+            g_roundActive = false;
+            g_playerDeathReported = false;
+            g_waitingForVolcanoLoad = false;
+            g_volcanoLoadReported = false;
+
+            const uintptr_t player =
+                GetLocalPlayerIns();
+
+            if (player)
+            {
+                RemoveSpEffectFromChrIns(
+                    player,
+                    SPEFFECT_ROUND_START_LOCK);
+
+                Log(
+                    "[ROUND] EndGame -> movement unlocked.");
+            }
+
+            SetLocalRole(Role::None);
+            ClearRoleMagic();
+            RequestRoundCleanup();
+
+            // Same flag as the F9 test hotkey - see FLAG_RETURN_TO_HUB_REQUEST below.
+            bool shouldReturnToHub = true;
+
+            const auto returnParam =
+                params.find("returnToHub");
+
+            if (returnParam != params.end() &&
+                returnParam->second == "0")
+            {
+                shouldReturnToHub = false;
+            }
+
+            if (shouldReturnToHub)
+            {
+                if (SetEventFlag(
+                    FLAG_RETURN_TO_HUB_REQUEST,
+                    true))
+                {
+                    Log(
+                        "[NET] EndGame -> "
+                        "Return to Roundtable requested.");
+                }
+                else
+                {
+                    Log(
+                        "[ERROR] EndGame -> Failed to request "
+                        "return to Roundtable.");
+                }
+            }
+            else
+            {
+                // The player already returned naturally through death.
+                // Clear any older request instead of creating another one.
+                SetEventFlag(
+                    FLAG_RETURN_TO_HUB_REQUEST,
+                    false);
+
+                Log(
+                    "[ROUND] EndGame cleanup completed; "
+                    "player already returned through death.");
             }
         }
         else
@@ -4742,6 +4875,22 @@ namespace MM
                     volcanoLoaded) &&
                     volcanoLoaded)
                 {
+                    const uintptr_t player =
+                        GetLocalPlayerIns();
+
+                    if (player &&
+                        !HasSpEffect(
+                            SPEFFECT_ROUND_START_LOCK))
+                    {
+                        ApplySpEffectToChrIns(
+                            player,
+                            SPEFFECT_ROUND_START_LOCK);
+
+                        Log(
+                            "[ROUND] Volcano loaded -> "
+                            "movement locked while waiting for Commence.");
+                    }
+
                     const std::string eventLine =
                         "event=PlayerLoaded round=" +
                         g_activeRoundId;
@@ -5177,6 +5326,16 @@ namespace MM
             // F9 = return to Roundtable
             if (GetAsyncKeyState(VK_F9) & 1)
             {
+                const uintptr_t player =
+                    GetLocalPlayerIns();
+
+                if (player)
+                {
+                    RemoveSpEffectFromChrIns(
+                        player,
+                        SPEFFECT_ROUND_START_LOCK);
+                }
+
                 if (SetEventFlag(
                     FLAG_RETURN_TO_HUB_REQUEST,
                     true))
@@ -5387,6 +5546,23 @@ namespace MM
 
             if (TryReadPlayerSlot(0, localPlayer))
             {
+                if (g_roundActive &&
+                    !g_playerDeathReported &&
+                    !localPlayer.alive)
+                {
+                    const std::string eventLine =
+                        "event=PlayerDied round=" +
+                        g_activeRoundId;
+
+                    if (mmTcpClient.sendLine(eventLine))
+                    {
+                        g_playerDeathReported = true;
+                        Log(
+                            "[ROUND] Reported PlayerDied for round=" +
+                            g_activeRoundId);
+                    }
+                }
+
                 if (!aliveStateInitialized)
                 {
                     lastAliveState = localPlayer.alive;
