@@ -18,6 +18,9 @@ const MIN_ROUND_DURATION_MS = 60_000;
 const MAX_ROUND_DURATION_MS = 10 * 60_000;
 const WIN_RESULT_DELAY_MS = 3_000;
 const RESULT_DISPLAY_MS = 6_000;
+// Time after EndGame is sent for each client to complete its
+// Roundtable warp before the server permits another round.
+const HUB_RETURN_GRACE_MS = 5_000;
 
 const ITEM_SPAWN_INTERVAL_MS = 31_313;
 const ITEM_SPAWN_POINT_COUNT = 10;
@@ -174,8 +177,41 @@ function resetRoomToWaiting(roomId, expectedRoundId) {
   const room = rooms.get(roomId);
   const round = roomRounds.get(roomId);
 
-  if (!room || !round || round.id !== expectedRoundId) return;
+  if (
+    !room ||
+    !round ||
+    round.id !== expectedRoundId ||
+    round.state === 'RESETTING'
+  ) {
+    return;
+  }
 
+  round.state = 'RESETTING';
+
+  // Prevent players from readying up while one or more clients
+  // may still be completing the return warp.
+  for (const [id, peer] of room) {
+    peer.ready = false;
+
+    broadcast(room, {
+      type: 'peer-ready',
+      id,
+      ready: false,
+    });
+  }
+
+  broadcast(room, {
+    type: 'round-timer',
+    endsAt: null,
+  });
+
+  broadcastRoundState(
+    room,
+    'RESETTING',
+  );
+
+  // Living players still in Volcano Manor need a warp.
+  // Dead players are already in Roundtable.
   for (const id of round.participantIds) {
     const shouldReturnToHub =
       round.aliveByPlayerId.get(id) !== false;
@@ -192,16 +228,43 @@ function resetRoomToWaiting(roomId, expectedRoundId) {
     );
   }
 
-  for (const [id, peer] of room) {
-    peer.ready = false;
-    broadcast(room, { type: 'peer-ready', id, ready: false });
-  }
+  console.log(
+    `[round] resetting room="${roomId}" ` +
+    `round="${expectedRoundId}"`,
+  );
 
-  broadcast(room, { type: 'round-timer', endsAt: null });
-  broadcastRoundState(room, 'WAITING');
-  roomRounds.delete(roomId);
+  round.resetTimer = setTimeout(
+    () => {
+      const currentRoom =
+        rooms.get(roomId);
 
-  log(`[round] reset room="${roomId}" round="${expectedRoundId}"`);
+      const currentRound =
+        roomRounds.get(roomId);
+
+      if (
+        !currentRoom ||
+        !currentRound ||
+        currentRound.id !== expectedRoundId
+      ) {
+        return;
+      }
+
+      currentRound.resetTimer = null;
+
+      broadcastRoundState(
+        currentRoom,
+        'WAITING',
+      );
+
+      roomRounds.delete(roomId);
+
+      console.log(
+        `[round] reset complete room="${roomId}" ` +
+        `round="${expectedRoundId}"`,
+      );
+    },
+    HUB_RETURN_GRACE_MS,
+  );
 }
 
 function finishRound(roomId, result, reason) {
@@ -221,6 +284,11 @@ function finishRound(roomId, result, reason) {
   if (round.itemSpawnTimer) {
     clearInterval(round.itemSpawnTimer);
     round.itemSpawnTimer = null;
+  }
+
+  if (round.resetTimer) {
+    clearTimeout(round.resetTimer);
+    round.resetTimer = null;
   }
 
   // Stop the gameplay timer immediately once a result has been
@@ -704,6 +772,7 @@ wss.on('connection', (ws) => {
         ),
         activeTimer: null,
         resultTimer: null,
+        resetTimer: null,
         endingTimer: null,
         itemSpawnTimer: null,
         occupiedItemPoints: new Set(),
