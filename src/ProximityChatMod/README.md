@@ -1,8 +1,8 @@
-# SeamlessCoopExtension
+# ProximityChatMod
 
-This project aims to add custom gamemodes to Elden Ring, via the existing seamless coop framework. Seamless coop is a mod which enables for players to connect and play through the entire game in functionally one sitting. As part of seamless, there is an experiemental build that increases the player cap from 5 to hundreds of players. 
+This project is the native DLL that powers proximity voice chat for Elden Ring. It reads the game's memory to find the local player's position, HP, map area, camera facing, and current "block" ID, then streams that as plain text over a local TCP socket (127.0.0.1:9191) to the Electron app in elden-ring-prox-chat. That app uses the data to figure out which players are near each other in the game world and adjusts voice chat volume/muting between them accordingly.
 
-The pvp in Elden Ring by default is, at it's core, not well made. This project seeks to remedy that, by adding in custom gamemodes such as capture the flag, deathmatch, defend the point, etc. All of them are custom made via souls modding tools, reverse engineering tools, and custom written dll scripts. 
+It runs alongside the real Seamless Co-op multiplayer mod (ersc.dll) rather than replacing it - Seamless Co-op handles the actual multiplayer connection between players, this DLL only reads local game state for the proximity chat feature.
 
 The dll scripting- clion folder contains the main dll work. This is done in c++ and involves finding functions and values in memory, then calling, hooking, reading, or writing to them. Most of the heavily technical/programming/reverse engineering work can be found here. The old visual studio folder for dllscripting is outdated, it merely exists as a code repository for anything I had before I rewrote signifigant parts of the project. 
 

@@ -1,6 +1,7 @@
 #include "WorldChrMan.h"
 #include "Signature.h"
 #include "GameVersion.h"
+#include "PointerChain.h"
 #include "pch.h"
 #include <iostream>
 #include <cmath>
@@ -44,14 +45,6 @@ void** InitHelper() {
     return WorldChrManIns;
 }
 
-// PointerChain::make stores its base argument by reference, so a null-safe fallback
-// must still return an lvalue (a ternary would bind a temporary and fail to compile).
-static uintptr_t& SafeDeref(void** add) {
-    static uintptr_t zero = 0;
-    if (add) return *(uintptr_t*)add;
-    return zero;
-}
-
 // Ported from EROverlay's saneCoord(): a pointer walk can succeed (no crash, no null)
 // and still land on garbage/freed memory. Catches that case so a bad read is treated
 // the same as an empty slot rather than being trusted and streamed out as-is.
@@ -70,14 +63,7 @@ static bool saneCoord(float x, float y, float z) {
     return true;
 }
 
-WorldChrMan::WorldChrMan(void** add) : Address(add ? (void*)*(uintptr_t*)add : nullptr),
-php(SafeDeref(add), 0x10EF8, 0, 0x190u, 0, 0x138),
-pmhp(SafeDeref(add), 0x10EF8, 0, 0x190u, 0, 0x13C),
-ianim(SafeDeref(add), 0x10EF8, 0, 0x190u, 0x58, 0x18),
-canim(SafeDeref(add), 0x10EF8, 0, 0x190u, 0x58, 0x20),
-lxcoord(SafeDeref(add), 0x10EF8, 0, 0x190u, 0x68, 0x70),
-lycoord(SafeDeref(add), 0x10EF8, 0, 0x190u, 0x68, 0x74),
-lzcoord(SafeDeref(add), 0x10EF8, 0, 0x190u, 0x68, 0x78) {
+WorldChrMan::WorldChrMan(void** add) : Address(add ? (void*)*(uintptr_t*)add : nullptr) {
 }
 
 bool WorldChrMan::isLoaded() {
@@ -95,152 +81,6 @@ WorldChrMan WorldChrMan::Make() {
         return WorldChrMan(WorldChrManIns);
     else return WorldChrMan(nullptr);
 }
-
-int WorldChrMan::getHP() {
-    if (address) {
-        return *php;
-    }
-    return -1;
-}
-
-void WorldChrMan::setHP(int hp) {
-    if (address) {
-        *php = hp;
-    }
-}
-
-int WorldChrMan::getMaxHP() {
-    if (address) {
-        return *pmhp;
-    }
-    return -1;
-}
-
-void WorldChrMan::setIdleAnim(int idleAnimId) {
-    if (address) {
-        *ianim = idleAnimId;
-    }
-}
-
-int WorldChrMan::getCurrentAnimID() {
-    if (address) {
-        return *canim;
-    }
-    return -1;
-}
-
-void WorldChrMan::setLocalCoords(float x, float y, float z) {
-    if (address) {
-        if (x != NULL) {
-            *lxcoord = x;
-        }
-        if (y != NULL) {
-            *lycoord = y;
-        }
-        if (z != NULL) {
-            *lzcoord = z;
-        }
-    }
-}
-
-// Raw pointer walk (not PointerChain) wrapped in SEH, same reasoning as tryReadSlot:
-// a bad/out-of-bounds slot returns a safe default instead of crashing the whole game.
-// Note: preserves the existing chain shape exactly (0x190, 0x18, 0x20, no +0x58 step),
-// which differs from the local player's canim chain (0x190u, 0x58, 0x20) - that
-// discrepancy predates this change and is left as-is; flagging it separately.
-int WorldChrMan::getCurrentAnimIdForOtherPlayer(int playerSlot) {
-    __try {
-        if (!WorldChrManIns) {
-            return -1;
-        }
-        uintptr_t base = *(uintptr_t*)WorldChrManIns;
-        base = *(uintptr_t*)(base + 0x10EF8);
-        base = *(uintptr_t*)(base + (0x10 * playerSlot));
-        if (!base) {
-            return -1;
-        }
-        base = *(uintptr_t*)(base + 0x190);
-        if (!base) {
-            return -1;
-        }
-        base = *(uintptr_t*)(base + 0x18);
-        if (!base) {
-            return -1;
-        }
-        return *(int*)(base + 0x20);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return -1;
-    }
-}
-
-// tryReadSlot already does exactly this walk safely (same offsets, SEH-wrapped) -
-// reuse it instead of duplicating the offset chain a third time.
-PlayerCoords WorldChrMan::getCoordsForOtherPlayer(int playerSlot) {
-    PlayerCoords coords{};
-    tryReadSlot(playerSlot, coords);
-    return coords;
-}
-
-// Note: preserves the existing (likely buggy) unscaled "i" offset - every other
-// per-slot walk in this file uses playerOffset = 0x10 * playerSlot since each slot
-// entry is 0x10 bytes, but this one indexes by raw slot number. Left as-is here
-// (SEH-wrapped only) and flagged separately rather than silently changed, since it's
-// a behavior change that needs verifying in-game, not a crash-safety fix.
-int WorldChrMan::getPlayerSlotFromChrIns(ChrIns *chrIns) {
-    __try {
-        if (!WorldChrManIns) {
-            return -1;
-        }
-        int playerCount = getPlayerCount();
-        uintptr_t base = *(uintptr_t*)WorldChrManIns;
-        base = *(uintptr_t*)(base + 0x10EF8);
-        for (int i = 0; i < playerCount; i++) {
-            ChrIns* arrayChrIns = *(ChrIns**)(base + i);
-            if (arrayChrIns == chrIns) {
-                return i;
-            }
-        }
-        return -1;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return -1;
-    }
-}
-
-/*
- * Least significant bit(pos 0) is on the right here.
- * Simple flag checker
- */
-bool WorldChrMan::readBitFlag(int value, int pos){
-    int mask = (1 << pos);
-    return ((value & mask) != 0);
-}
-
-bool WorldChrMan::isInIframes(int playerSlot) {
-    __try {
-        if (!WorldChrManIns) {
-            return false;
-        }
-        uintptr_t base = *(uintptr_t*)WorldChrManIns;
-        base = *(uintptr_t*)(base + 0x10EF8);
-        base = *(uintptr_t*)(base + (0x10 * playerSlot));
-        if (!base) {
-            return false;
-        }
-        base = *(uintptr_t*)(base + 0x190);
-        if (!base) {
-            return false;
-        }
-        base = *(uintptr_t*)(base + 0x8);
-        if (!base) {
-            return false;
-        }
-        int flagData = *(int*)(base + 0x40);
-        return readBitFlag(flagData, 1);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
-
 
 //try [[GameMan]+D60]+14(or +1C) as a total player in session value
 //horribly hacky and unclean temp solution(not even a worldchrman aob)
@@ -287,7 +127,7 @@ bool WorldChrMan::tryReadSlot(int playerSlot, PlayerCoords& out) {
             return false;
         }
 
-        // Same base as php/pmhp in the constructor, mirrored here since this probe bypasses PointerChain.
+        // Same base as the local player's hp chain used to derive, mirrored here since this probe bypasses PointerChain.
         uintptr_t hpBase = *(uintptr_t*)(chrBase + 0);
         out.hp = *(int*)(hpBase + 0x138);
         out.maxHp = *(int*)(hpBase + 0x13C);
@@ -478,4 +318,3 @@ void WorldChrMan::debugBlockId() {
     }
     std::cout << "BlockId: " << blockId << std::endl;
 }
-
