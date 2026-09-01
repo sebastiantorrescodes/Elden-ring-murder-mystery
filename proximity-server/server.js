@@ -22,6 +22,13 @@ const RESULT_DISPLAY_MS = 6_000;
 const ITEM_SPAWN_INTERVAL_MS = 31_313;
 const ITEM_SPAWN_POINT_COUNT = 10;
 
+// Prefixes every server log with a sortable UTC timestamp so lines can be
+// correlated with client-side logs / crash reports without guessing at
+// server-local time.
+function log(...args) {
+  console.log(`[${new Date().toISOString()}]`, ...args);
+}
+
 function isFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -194,7 +201,7 @@ function resetRoomToWaiting(roomId, expectedRoundId) {
   broadcastRoundState(room, 'WAITING');
   roomRounds.delete(roomId);
 
-  console.log(`[round] reset room="${roomId}" round="${expectedRoundId}"`);
+  log(`[round] reset room="${roomId}" round="${expectedRoundId}"`);
 }
 
 function finishRound(roomId, result, reason) {
@@ -233,7 +240,7 @@ function finishRound(roomId, result, reason) {
     'ENDING',
   );
 
-  console.log(
+  log(
     `[round] ending room="${roomId}" round="${round.id}" ` +
     `result=${result} reason=${reason}`,
   );
@@ -268,7 +275,7 @@ function finishRound(roomId, result, reason) {
       result,
     );
 
-    console.log(
+    log(
       `[round] result banner sent ` +
       `room="${roomId}" round="${round.id}" ` +
       `result=${result}`,
@@ -328,7 +335,7 @@ function spawnRoundItem(roomId) {
 
   // Every location currently contains an unclaimed pickup.
   if (availableIndexes.length === 0) {
-    console.log(
+    log(
       `[items] no available spawn points ` +
       `room="${roomId}" round="${round.id}"`,
     );
@@ -365,7 +372,7 @@ function spawnRoundItem(roomId) {
     }
   }
 
-  console.log(
+  log(
     `[items] spawned index=${index} ` +
     `room="${roomId}" round="${round.id}"`,
   );
@@ -472,7 +479,7 @@ wss.on('connection', (ws) => {
 
     if (msg.type === 'host') {
       if (ROOM_SECRET && msg.secret !== ROOM_SECRET) {
-        console.log('[host] rejected: missing/incorrect secret');
+        log('[host] rejected: missing/incorrect secret');
         ws.close(4001, 'invalid secret');
         return;
       }
@@ -487,7 +494,7 @@ wss.on('connection', (ws) => {
       roomHosts.set(roomId, peerId);
 
       send(ws, { type: 'welcome', id: peerId, room: roomId, hostId: peerId, peers: [] });
-      console.log(`[host] ${peerId} ("${displayName}") created room "${roomId}"`);
+      log(`[host] ${peerId} ("${displayName}") created room "${roomId}"`);
       return;
     }
 
@@ -498,7 +505,7 @@ wss.on('connection', (ws) => {
       const targetRoomId = msg.room;
       const room = targetRoomId ? rooms.get(targetRoomId) : undefined;
       if (!room) {
-        console.log(`[join] rejected: room "${targetRoomId}" not found`);
+        log(`[join] rejected: room "${targetRoomId}" not found`);
         ws.close(4003, 'room not found');
         return;
       }
@@ -508,7 +515,7 @@ wss.on('connection', (ws) => {
       // otherwise have position/volume/signaling for that id randomly cross-routed
       // between their two sockets depending on which joined last.
       if (room.has(requestedId)) {
-        console.log(`[join] rejected: id "${requestedId}" already in use in room "${targetRoomId}"`);
+        log(`[join] rejected: id "${requestedId}" already in use in room "${targetRoomId}"`);
         ws.close(4002, 'id already in use');
         return;
       }
@@ -528,7 +535,7 @@ wss.on('connection', (ws) => {
           .map(([id, peer]) => ({ id, displayName: peer.displayName, ready: peer.ready })),
       });
       broadcast(room, { type: 'peer-joined', id: peerId, displayName }, ws);
-      console.log(`[join] ${peerId} ("${displayName}") joined room "${roomId}" (${room.size} total)`);
+      log(`[join] ${peerId} ("${displayName}") joined room "${roomId}" (${room.size} total)`);
       return;
     }
 
@@ -586,14 +593,14 @@ wss.on('connection', (ws) => {
 
     if (msg.type === 'start-round') {
       if (roomHosts.get(roomId) !== peerId) {
-        console.log(
+        log(
           `[start-round] rejected: "${peerId}" is not host`,
         );
         return;
       }
 
       if (roomRounds.has(roomId)) {
-        console.log(
+        log(
           `[start-round] rejected: room "${roomId}" already has a round`,
         );
         return;
@@ -604,7 +611,7 @@ wss.on('connection', (ws) => {
         msg.durationMs < MIN_ROUND_DURATION_MS ||
         msg.durationMs > MAX_ROUND_DURATION_MS
       ) {
-        console.log(
+        log(
           `[start-round] rejected: invalid duration`,
         );
         return;
@@ -618,7 +625,7 @@ wss.on('connection', (ws) => {
         participantIds.length > MAX_GAME_PLAYERS ||
         participantIds.length > SPAWN_COUNT
       ) {
-        console.log(
+        log(
           `[start-round] rejected: invalid player count ` +
           participantIds.length,
         );
@@ -631,7 +638,7 @@ wss.on('connection', (ws) => {
         );
 
       if (!everyoneReady) {
-        console.log(
+        log(
           `[start-round] rejected: not everyone is ready`,
         );
         return;
@@ -723,7 +730,7 @@ wss.on('connection', (ws) => {
         );
       }
 
-      console.log(
+      log(
         `[start-round] room="${roomId}" ` +
         `round="${roundId}" ` +
         `players=${participantIds.length}`,
@@ -750,7 +757,7 @@ wss.on('connection', (ws) => {
         round.id !== msg.roundId ||
         !round.participantIds.includes(peerId)
       ) {
-        console.log(
+        log(
           `[game-event] ignored stale/invalid event ` +
           `from "${peerId}"`,
         );
@@ -771,7 +778,7 @@ wss.on('connection', (ws) => {
         // Several clients may observe the shared flag turning OFF
         // and report it. Deleting from a Set is safely idempotent.
         if (round.occupiedItemPoints.delete(msg.index)) {
-          console.log(
+          log(
             `[items] picked up index=${msg.index} ` +
             `room="${roomId}" round="${round.id}"`,
           );
@@ -785,7 +792,7 @@ wss.on('connection', (ws) => {
         if (round.aliveByPlayerId.get(peerId) === false) return;
 
         round.aliveByPlayerId.set(peerId, false);
-        console.log(`[game-event] PlayerDied "${peerId}" round="${round.id}"`);
+        log(`[game-event] PlayerDied "${peerId}" round="${round.id}"`);
         evaluateRoundState(roomId);
         return;
       }
@@ -798,7 +805,7 @@ wss.on('connection', (ws) => {
         peerId,
       );
 
-      console.log(
+      log(
         `[game-event] PlayerLoaded "${peerId}" ` +
         `${round.loadedPlayerIds.size}/` +
         `${round.participantIds.length}`,
@@ -871,7 +878,7 @@ wss.on('connection', (ws) => {
 
       broadcastRoundState(room, 'ACTIVE');
 
-      console.log(
+      log(
         `[round] commenced room="${roomId}" ` +
         `round="${round.id}" endsAt=${endsAt}`,
       );
@@ -881,7 +888,7 @@ wss.on('connection', (ws) => {
 
     if (msg.type === 'end-round') {
       if (roomHosts.get(roomId) !== peerId) {
-        console.log(`[end-round] rejected: "${peerId}" is not host`);
+        log(`[end-round] rejected: "${peerId}" is not host`);
         return;
       }
 
@@ -894,7 +901,7 @@ wss.on('connection', (ws) => {
       // round timer, and it's broadcast (not per-target) since every player needs
       // to count down from the same deadline.
       if (roomHosts.get(roomId) !== peerId) {
-        console.log(`[round-timer] rejected: "${peerId}" is not host of room "${roomId}"`);
+        log(`[round-timer] rejected: "${peerId}" is not host of room "${roomId}"`);
         return;
       }
       if (msg.endsAt !== null && !isFiniteNumber(msg.endsAt)) return;
@@ -908,7 +915,7 @@ wss.on('connection', (ws) => {
       // open remote-control channel for any other peer. Same trust boundary as
       // ROOM_SECRET gating who can create a room in the first place.
       if (roomHosts.get(roomId) !== peerId) {
-        console.log(`[command] rejected: "${peerId}" is not host of room "${roomId}"`);
+        log(`[command] rejected: "${peerId}" is not host of room "${roomId}"`);
         return;
       }
       if (!isValidIdString(msg.to) || typeof msg.name !== 'string' || msg.name.length === 0 || msg.name.length > MAX_ID_LENGTH) {
@@ -933,7 +940,7 @@ wss.on('connection', (ws) => {
       !activeRound.roundEnded;
 
     room.delete(peerId);
-    console.log(`[leave] ${peerId} left room "${roomId}" (${room.size} remaining)`);
+    log(`[leave] ${peerId} left room "${roomId}" (${room.size} remaining)`);
     if (room.size === 0) {
       rooms.delete(roomId);
       roomHosts.delete(roomId);
@@ -947,4 +954,4 @@ wss.on('connection', (ws) => {
   });
 });
 
-console.log(`Proximity signaling server listening on ws://localhost:${PORT}`);
+log(`Proximity signaling server listening on ws://localhost:${PORT}`);
