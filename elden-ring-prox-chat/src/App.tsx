@@ -10,7 +10,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Settings as SettingsIcon, ArrowLeft, Check, Clipboard } from 'lucide-react';
+import {
+  Settings as SettingsIcon,
+  ArrowLeft,
+  Check,
+  Clipboard,
+  Mic,
+  MicOff,
+  UserX,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react';
 import {
   parseDllLine,
   parseAreaLine,
@@ -30,7 +40,23 @@ interface PeerRow {
   displayName: string;
   gain: number;
   ready: boolean;
+  micMuted: boolean;
 }
+
+interface MapOption {
+  id: string;
+  name: string;
+  // null = not yet available - rendered as an outlined placeholder with just the
+  // name (see the Choose Map JSX below) instead of an actual image.
+  image: string | null;
+}
+
+// The hover-darken/cycle mechanism (see the Choose Map JSX below) is generic -
+// dropping in more real maps later is just a matter of adding entries here.
+const MAPS: MapOption[] = [
+  { id: 'volcano-manor', name: 'Volcano Manor', image: volcanoManorImage },
+  { id: 'coming-soon', name: 'Coming Soon', image: null },
+];
 
 // Only one server in use - not something worth exposing as an editable field.
 const SERVER_URL = 'wss://er-proximity-chat.duckdns.org'; // < og
@@ -48,6 +74,9 @@ const MAX_GAME_PLAYERS = 6;
 const ROUND_DURATION_OPTIONS_MIN = [1, 5, 10] as const;
 type RoundDurationMin = (typeof ROUND_DURATION_OPTIONS_MIN)[number];
 const DEFAULT_ROUND_DURATION_MIN: RoundDurationMin = 5;
+
+const DISPLAY_NAME_MIN_LENGTH = 3;
+const DISPLAY_NAME_MAX_LENGTH = 15;
 
 const PLAYER_ID_STORAGE_KEY = 'elden-ring-prox-chat:playerId';
 const DISPLAY_NAME_STORAGE_KEY = 'elden-ring-prox-chat:displayName';
@@ -72,11 +101,48 @@ function getOrCreatePlayerId(): string {
   }
 }
 
+// Shown as the pre-filled default the first time someone opens the app (before
+// they've ever set their own name) - one is picked at random so a fresh group of
+// players doesn't all land on the same placeholder.
+const DEFAULT_DISPLAY_NAMES = [
+  'Patches',
+  'Varre',
+  'Nepheli',
+  'Sellen',
+  'Gideon',
+  'Millicent',
+  'Boggart',
+  'Thops',
+  'Rogier',
+  'Bernahl',
+  'Alexander',
+  'Dung Eater',
+  'Fia',
+  'Kenneth Haight',
+  'Rya',
+  'Gostoc',
+  'Blaidd',
+  'Seluvis',
+  'Latenna',
+  'Shabriri',
+] as const;
+
+function pickRandomDefaultName(): string {
+  return DEFAULT_DISPLAY_NAMES[Math.floor(Math.random() * DEFAULT_DISPLAY_NAMES.length)];
+}
+
 function getStoredDisplayName(): string {
   try {
-    return localStorage.getItem(DISPLAY_NAME_STORAGE_KEY) ?? '';
+    const existing = localStorage.getItem(DISPLAY_NAME_STORAGE_KEY);
+    if (existing) return existing;
+    // First launch - nothing saved yet. Roll a random name and persist it right
+    // away so it stays stable across reloads/restarts until actually changed,
+    // rather than re-rolling (and silently renaming the player) every time.
+    const picked = pickRandomDefaultName();
+    localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, picked);
+    return picked;
   } catch {
-    return '';
+    return pickRandomDefaultName();
   }
 }
 
@@ -115,11 +181,97 @@ function formatDuration(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
-function Meter({ innerRef }: { innerRef: React.Ref<HTMLDivElement> }) {
+function Meter({
+  innerRef,
+  muted,
+  onToggleMute,
+}: {
+  innerRef: React.Ref<HTMLDivElement>;
+  muted?: boolean;
+  // When provided, the mic icon itself becomes the mute toggle (the local "My
+  // mic" row) instead of a plain status indicator (peer rows, which can't be
+  // muted by anyone but themselves).
+  onToggleMute?: () => void;
+}) {
+  const icon = muted ? (
+    <MicOff className="size-3.5 shrink-0 text-red-400" aria-label="Muted" />
+  ) : (
+    <Mic className="size-3.5 shrink-0 text-muted-foreground" />
+  );
   return (
-    <div className="h-2.5 w-36 overflow-hidden rounded-full bg-muted">
-      <div ref={innerRef} className="h-full w-0 bg-primary" />
+    <div className="flex items-center gap-1.5">
+      {onToggleMute ? (
+        <button
+          type="button"
+          onClick={onToggleMute}
+          title={muted ? 'Unmute mic' : 'Mute mic'}
+          className="shrink-0 rounded transition-colors hover:bg-primary/10"
+        >
+          {icon}
+        </button>
+      ) : (
+        icon
+      )}
+      <div className="h-2.5 w-36 shrink-0 overflow-hidden rounded-full bg-muted">
+        <div ref={innerRef} className="h-full w-0 bg-primary" />
+      </div>
     </div>
+  );
+}
+
+// Pulled out so it can be rendered both up at the top of the list (when the peer
+// is the host - see the Players list ordering below) and in the regular rest-of-
+// the-room block, without duplicating the markup.
+function PeerRowItem({
+  peer,
+  isHost,
+  canKick,
+  onKick,
+  meterRef,
+}: {
+  peer: PeerRow;
+  isHost: boolean;
+  // Whether the *local viewer* is the host - controls whether the Kick button
+  // shows on this row at all, independent of `isHost` above (which is about
+  // whether this row's own peer is the host, for the Host tag).
+  canKick: boolean;
+  onKick?: () => void;
+  meterRef: (el: HTMLDivElement | null) => void;
+}) {
+  return (
+    <li className="flex flex-col gap-1 whitespace-nowrap">
+      <div className="flex items-center gap-2">
+        <div className="flex w-28 shrink-0 items-center">
+          <span className="min-w-0 flex-1 truncate text-primary">{peer.displayName}</span>
+        </div>
+        <div className="flex w-12 shrink-0 items-center justify-end">
+          {isHost && (
+            <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+              Host
+            </span>
+          )}
+        </div>
+        <span
+          className={cn(
+            'rounded px-1.5 py-0.5 text-[10px] font-semibold',
+            peer.ready ? 'bg-green-500/20 text-green-400' : 'bg-muted text-muted-foreground',
+          )}
+        >
+          {peer.ready ? 'Ready' : 'Not Ready'}
+        </span>
+        {canKick && (
+          <button
+            type="button"
+            onClick={onKick}
+            title={`Kick ${peer.displayName}`}
+            className="rounded p-1 text-muted-foreground transition-colors hover:bg-red-500/20 hover:text-red-400"
+          >
+            <UserX className="size-3.5" />
+          </button>
+        )}
+      </div>
+      <Meter innerRef={meterRef} muted={peer.micMuted} />
+    </li>
   );
 }
 
@@ -169,6 +321,9 @@ export default function App() {
   // True for a brief window right after clicking the room code's copy button, so it
   // can show a checkmark confirming the copy actually happened.
   const [roomCodeCopied, setRoomCodeCopied] = useState(false);
+  // Purely cosmetic (Choose Map is decorative for now) - not sent to the server
+  // or the DLL.
+  const [selectedMapIndex, setSelectedMapIndex] = useState(0);
   const [status, setStatus] = useState('disconnected');
   const [isConnected, setIsConnected] = useState(false);
   const [peers, setPeers] = useState<PeerRow[]>([]);
@@ -180,6 +335,8 @@ export default function App() {
   const peerGainsRef = useRef(new Map<string, number>());
   const peerDisplayNamesRef = useRef(new Map<string, string>());
   const peerReadyRef = useRef(new Map<string, boolean>());
+  const peerMicMutedRef = useRef(new Map<string, boolean>());
+  const [micMuted, setMicMuted] = useState(false);
   // area/camera/block lines arrive separately from slot= lines (once per poll cycle,
   // not per slot) - remember the latest of each so they can be attached to the next
   // position send.
@@ -197,8 +354,22 @@ export default function App() {
         displayName: peerDisplayNamesRef.current.get(id) ?? id,
         gain,
         ready: peerReadyRef.current.get(id) ?? false,
+        micMuted: peerMicMutedRef.current.get(id) ?? false,
       })),
     );
+  };
+
+  // Disables the outgoing mic track rather than stopping it, so unmuting doesn't
+  // need to re-request getUserMedia or renegotiate any peer connection.
+  const toggleMicMute = () => {
+    setMicMuted((prev) => {
+      const next = !prev;
+      localStreamRef.current?.getAudioTracks().forEach((track) => {
+        track.enabled = !next;
+      });
+      signalingRef.current?.sendMicMuted(next);
+      return next;
+    });
   };
 
   // Device labels are blank until a mic permission has been granted at least once,
@@ -310,6 +481,8 @@ export default function App() {
     peerDisplayNamesRef.current.clear();
     peerReadyRef.current.clear();
     peerMeterRefs.current.clear();
+    peerMicMutedRef.current.clear();
+    setMicMuted(false);
     setPeers([]);
     setActiveRoomCode('');
     setHostId(null);
@@ -358,6 +531,7 @@ export default function App() {
           meshRef.current?.registerExistingPeer(peer.id);
           peerDisplayNamesRef.current.set(peer.id, peer.displayName);
           peerReadyRef.current.set(peer.id, peer.ready);
+          peerMicMutedRef.current.set(peer.id, peer.micMuted);
           if (!peerGainsRef.current.has(peer.id)) peerGainsRef.current.set(peer.id, 1);
         }
         syncPeerRows();
@@ -367,6 +541,7 @@ export default function App() {
         peerDisplayNamesRef.current.set(peerId, peerDisplayName);
         peerGainsRef.current.set(peerId, 1);
         peerReadyRef.current.set(peerId, false); // fresh peer state is always unready - see makeInitialPeerState
+        peerMicMutedRef.current.set(peerId, false);
         syncPeerRows();
       },
       onPeerLeft: (peerId) => {
@@ -375,6 +550,7 @@ export default function App() {
         peerDisplayNamesRef.current.delete(peerId);
         peerReadyRef.current.delete(peerId);
         peerMeterRefs.current.delete(peerId);
+        peerMicMutedRef.current.delete(peerId);
         syncPeerRows();
       },
       onPeerReady: (peerId, ready) => {
@@ -385,6 +561,14 @@ export default function App() {
         peerReadyRef.current.set(peerId, ready);
         syncPeerRows();
       },
+      onPeerMicMuted: (peerId, peerMicMuted) => {
+        peerMicMutedRef.current.set(peerId, peerMicMuted);
+        syncPeerRows();
+      },
+      // The previous host disconnected and the server promoted someone else (see
+      // server.js's close handler) - isHost/the Host tag/host-gated buttons all
+      // derive from hostId, so this is the only state update needed here.
+      onHostChanged: (newHostId) => setHostId(newHostId),
       onRoundTimer: (endsAt) => setRoundEndsAt(endsAt),
       onRoundState: (state, result) => {
         if (state === 'LOADING') {
@@ -467,6 +651,23 @@ export default function App() {
   // not just the host (unlike Start/End Game below).
   const handleReadyToggle = () => {
     signalingRef.current?.sendReady(!myReady);
+  };
+
+  const handlePrevMap = () => {
+    setSelectedMapIndex((prev) => (prev - 1 + MAPS.length) % MAPS.length);
+  };
+
+  const handleNextMap = () => {
+    setSelectedMapIndex((prev) => (prev + 1) % MAPS.length);
+  };
+
+  // Only takes effect server-side if this client is the room's host (see
+  // server.js's 'kick' handler) - the Kick button itself is also only rendered
+  // for the host (see the Players list JSX below), so this is a defense-in-depth
+  // guard, not the actual authorization boundary.
+  const handleKickClick = (peerId: string) => {
+    if (!isHost) return;
+    signalingRef.current?.sendKick(peerId);
   };
 
   // Only the room host's "command" messages are honored server-side (see server.js) -
@@ -655,6 +856,14 @@ export default function App() {
   }, []);
 
   const allReady = myReady && peers.every((peer) => peer.ready);
+  const isDisplayNameValid = displayName.trim().length >= DISPLAY_NAME_MIN_LENGTH;
+  const currentMap = MAPS[selectedMapIndex];
+  // Players list order: host first, then "me", then everyone else. `peers` never
+  // contains the local player (see syncPeerRows), so when I'm the host, my own row
+  // (rendered separately below) already covers "host first" and there's no
+  // separate host peer to pull out.
+  const hostPeer = !isHost ? peers.find((peer) => peer.id === hostId) : undefined;
+  const otherPeers = hostPeer ? peers.filter((peer) => peer.id !== hostPeer.id) : peers;
 
   return (
     <div className="relative flex min-h-screen items-center justify-center p-8">
@@ -710,62 +919,94 @@ export default function App() {
         )}
         <div className="absolute top-24 right-0 flex w-64 flex-col items-center gap-2 pr-6">
           <h2 className="font-display text-lg tracking-wide text-primary whitespace-nowrap">Choose Map</h2>
-          <img
-            src={volcanoManorImage}
-            alt="Volcano Manor"
-            className="h-80 w-full rounded-lg border border-border object-cover shadow-lg"
-          />
-          <span className="font-display text-sm tracking-wide text-primary">Volcano Manor</span>
+          <div className="group relative h-80 w-full overflow-hidden rounded-lg border border-border shadow-lg">
+            {currentMap.image ? (
+              <img src={currentMap.image} alt={currentMap.name} className="h-full w-full object-cover" />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center bg-card">
+                <span className="font-display text-lg tracking-wide text-primary">{currentMap.name}</span>
+              </div>
+            )}
+            <div className="pointer-events-none absolute inset-0 bg-black/0 transition-colors duration-200 group-hover:bg-black/50" />
+            {MAPS.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  onClick={handlePrevMap}
+                  aria-label="Previous map"
+                  className="absolute top-1/2 left-2 -translate-y-1/2 text-primary opacity-0 transition-opacity duration-200 group-hover:opacity-100 hover:text-primary/80"
+                >
+                  <ChevronLeft className="size-8" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNextMap}
+                  aria-label="Next map"
+                  className="absolute top-1/2 right-2 -translate-y-1/2 text-primary opacity-0 transition-opacity duration-200 group-hover:opacity-100 hover:text-primary/80"
+                >
+                  <ChevronRight className="size-8" />
+                </button>
+              </>
+            )}
+          </div>
+          <span className="font-display text-sm tracking-wide text-primary">{currentMap.name}</span>
         </div>
         <div className="absolute top-24 left-0 flex w-64 flex-col gap-3 pl-6">
           <h2 className="font-display text-lg tracking-wide text-primary whitespace-nowrap">Players</h2>
           <ul className="flex flex-col gap-3 font-mono text-sm">
-            <li className="flex items-center gap-2 whitespace-nowrap">
-              <span>My mic:</span>
-              {isHost && (
-                <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
-                  Host
-                </span>
-              )}
-              <Meter innerRef={localMeterRef} />
-              <button
-                type="button"
-                onClick={handleReadyToggle}
-                className={cn(
-                  'ml-4 rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors',
-                  myReady
-                    ? 'bg-green-500/20 text-green-400'
-                    : 'bg-muted text-muted-foreground hover:bg-primary/10',
-                )}
-              >
-                {myReady ? 'Ready' : 'Not Ready'}
-              </button>
-            </li>
-            {peers.map((peer) => (
-              <li key={peer.id} className="flex items-center gap-2 whitespace-nowrap">
-                <span className="text-primary">
-                  {peer.displayName}: {peer.gain.toFixed(2)}
-                </span>
-                {peer.id === hostId && (
-                  <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
-                    Host
-                  </span>
-                )}
-                <Meter
-                  innerRef={(el) => {
-                    if (el) peerMeterRefs.current.set(peer.id, el);
-                    else peerMeterRefs.current.delete(peer.id);
-                  }}
-                />
-                <span
+            {hostPeer && (
+              <PeerRowItem
+                key={hostPeer.id}
+                peer={hostPeer}
+                isHost
+                canKick={false}
+                meterRef={(el) => {
+                  if (el) peerMeterRefs.current.set(hostPeer.id, el);
+                  else peerMeterRefs.current.delete(hostPeer.id);
+                }}
+              />
+            )}
+            <li className="flex flex-col gap-1 whitespace-nowrap">
+              <div className="flex items-center gap-2">
+                <div className="flex w-28 shrink-0 items-center gap-1">
+                  <span className="min-w-0 flex-1 truncate">My mic:</span>
+                </div>
+                <div className="flex w-12 shrink-0 items-center justify-end">
+                  {isHost && (
+                    <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                      Host
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleReadyToggle}
                   className={cn(
-                    'ml-8 rounded px-1.5 py-0.5 text-[10px] font-semibold',
-                    peer.ready ? 'bg-green-500/20 text-green-400' : 'bg-muted text-muted-foreground',
+                    'rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors',
+                    myReady
+                      ? 'bg-green-500/20 text-green-400'
+                      : 'bg-muted text-muted-foreground hover:bg-primary/10',
                   )}
                 >
-                  {peer.ready ? 'Ready' : 'Not Ready'}
-                </span>
-              </li>
+                  {myReady ? 'Ready' : 'Not Ready'}
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <Meter innerRef={localMeterRef} muted={micMuted} onToggleMute={toggleMicMute} />
+              </div>
+            </li>
+            {otherPeers.map((peer) => (
+              <PeerRowItem
+                key={peer.id}
+                peer={peer}
+                isHost={peer.id === hostId}
+                canKick={isHost}
+                onKick={() => handleKickClick(peer.id)}
+                meterRef={(el) => {
+                  if (el) peerMeterRefs.current.set(peer.id, el);
+                  else peerMeterRefs.current.delete(peer.id);
+                }}
+              />
             ))}
           </ul>
         </div>
@@ -822,8 +1063,21 @@ export default function App() {
               className="w-72"
               placeholder="display name"
               value={displayName}
+              maxLength={DISPLAY_NAME_MAX_LENGTH}
               onChange={(e) => setDisplayName(e.target.value)}
             />
+            <p
+              className={cn(
+                'text-xs',
+                displayName.trim().length > 0 && displayName.trim().length < DISPLAY_NAME_MIN_LENGTH
+                  ? 'text-red-400'
+                  : 'text-muted-foreground',
+              )}
+            >
+              {displayName.trim().length > 0 && displayName.trim().length < DISPLAY_NAME_MIN_LENGTH
+                ? `Name must be at least ${DISPLAY_NAME_MIN_LENGTH} characters`
+                : `${displayName.length}/${DISPLAY_NAME_MAX_LENGTH} characters (min ${DISPLAY_NAME_MIN_LENGTH})`}
+            </p>
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="settings-mic">Microphone</Label>
@@ -855,7 +1109,11 @@ export default function App() {
               </SelectContent>
             </Select>
           </div>
-          <Button className="w-72" disabled={justSaved} onClick={handleSaveSettings}>
+          <Button
+            className="w-72"
+            disabled={justSaved || !isDisplayNameValid}
+            onClick={handleSaveSettings}
+          >
             {justSaved ? (
               <>
                 <Check /> Saved
@@ -902,8 +1160,13 @@ export default function App() {
           <p className="text-sm text-muted-foreground">
             Playing as <span className="text-primary">{displayName || 'no name set'}</span>
           </p>
+          {!isDisplayNameValid && (
+            <p className="-mt-2 text-xs text-red-400">
+              Set a display name ({DISPLAY_NAME_MIN_LENGTH}-{DISPLAY_NAME_MAX_LENGTH} characters) in Settings first
+            </p>
+          )}
 
-          <Button size="lg" className="w-56" onClick={handleHostClick}>
+          <Button size="lg" className="w-56" disabled={!isDisplayNameValid} onClick={handleHostClick}>
             Host Room
           </Button>
 
@@ -916,7 +1179,11 @@ export default function App() {
               value={roomCodeInput}
               onChange={(e) => setRoomCodeInput(e.target.value.toUpperCase())}
             />
-            <Button variant="secondary" disabled={!roomCodeInput.trim()} onClick={handleJoinClick}>
+            <Button
+              variant="secondary"
+              disabled={!roomCodeInput.trim() || !isDisplayNameValid}
+              onClick={handleJoinClick}
+            >
               Join Room
             </Button>
           </div>

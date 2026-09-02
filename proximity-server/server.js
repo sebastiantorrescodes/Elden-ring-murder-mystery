@@ -71,9 +71,9 @@ function resolveDisplayName(value) {
 
 // roomCode -> Map<peerId, { ws, displayName, x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY }>
 const rooms = new Map();
-// roomCode -> peerId of whoever hosted it. Not re-assigned if the host leaves - the
-// room just has no host peer anymore ("Host" tag disappears client-side) rather than
-// promoting someone; keeps this simple until host migration is actually needed.
+// roomCode -> peerId of whoever hosted it. If the host disconnects and the room
+// isn't empty, the close handler below promotes the longest-remaining peer rather
+// than leaving the room permanently host-less.
 const roomHosts = new Map();
 // roomCode -> active coordinated round
 const roomRounds = new Map();
@@ -106,6 +106,7 @@ function makeInitialPeerState(ws, displayName) {
     ws,
     displayName,
     ready: false,
+    micMuted: false,
     x: undefined,
     y: undefined,
     z: undefined,
@@ -600,7 +601,7 @@ wss.on('connection', (ws) => {
         hostId: roomHosts.get(roomId) || null,
         peers: [...room.entries()]
           .filter(([id]) => id !== peerId)
-          .map(([id, peer]) => ({ id, displayName: peer.displayName, ready: peer.ready })),
+          .map(([id, peer]) => ({ id, displayName: peer.displayName, ready: peer.ready, micMuted: peer.micMuted })),
       });
       broadcast(room, { type: 'peer-joined', id: peerId, displayName }, ws);
       log(`[join] ${peerId} ("${displayName}") joined room "${roomId}" (${room.size} total)`);
@@ -656,6 +657,18 @@ wss.on('connection', (ws) => {
       // fully server-authoritative (same reasoning as broadcastVolumes) instead
       // of each client also optimistically updating its own local copy.
       broadcast(room, { type: 'peer-ready', id: peerId, ready: msg.ready });
+      return;
+    }
+
+    if (msg.type === 'mic-muted') {
+      if (typeof msg.micMuted !== 'boolean') return;
+      const peer = room.get(peerId);
+      if (!peer) return;
+      peer.micMuted = msg.micMuted;
+      // Same reasoning as 'ready' above - purely cosmetic (lets other players see
+      // this peer muted themselves), but still server-authoritative rather than
+      // trusted client-side state.
+      broadcast(room, { type: 'peer-mic-muted', id: peerId, micMuted: msg.micMuted });
       return;
     }
 
@@ -997,6 +1010,25 @@ wss.on('connection', (ws) => {
       }
       return;
     }
+
+    if (msg.type === 'kick') {
+      // Same trust boundary as 'command' above - only the host can remove another
+      // peer from the room.
+      if (roomHosts.get(roomId) !== peerId) {
+        log(`[kick] rejected: "${peerId}" is not host of room "${roomId}"`);
+        return;
+      }
+      if (!isValidIdString(msg.id) || msg.id === peerId) return;
+      const target = room.get(msg.id);
+      if (!target) return;
+      log(`[kick] host "${peerId}" kicked "${msg.id}" from room "${roomId}"`);
+      // Closing the target's own socket fires its own 'close' handler below,
+      // which already does the full leave cleanup (room removal, peer-left
+      // broadcast, ending an in-progress round if they were a participant) -
+      // no separate cleanup needed here.
+      target.ws.close(4004, 'kicked by host');
+      return;
+    }
   });
 
   ws.on('close', () => {
@@ -1016,6 +1048,16 @@ wss.on('connection', (ws) => {
       roomRounds.delete(roomId);
     } else {
       broadcast(room, { type: 'peer-left', id: peerId });
+      // The host disconnected but the room isn't empty - promote whoever's been
+      // here longest (Map iteration order is insertion/join order) rather than
+      // leaving the room permanently host-less. See makeInitialPeerState/roomHosts
+      // above for why this wasn't done from the start (kept simple until needed).
+      if (roomHosts.get(roomId) === peerId) {
+        const newHostId = room.keys().next().value;
+        roomHosts.set(roomId, newHostId);
+        broadcast(room, { type: 'host-changed', hostId: newHostId });
+        log(`[host] "${peerId}" (host) left room "${roomId}" - promoted "${newHostId}"`);
+      }
       if (participantDisconnected) {
         finishRound(roomId, 'Stalemate', 'participant disconnected');
       }
