@@ -221,10 +221,8 @@ namespace MM
     constexpr int32_t SPEFFECT_RETURN_TO_HUB_REQUEST =
         500011;
 
-    // --------------------------------------------------------
-
-    constexpr uint32_t FLAG_VOLCANO_LOADED =
-        16009877;
+    constexpr int32_t SPEFFECT_VOLCANO_LOADED =
+        500012;
 
     // --------------------------------------------------------
 
@@ -4213,16 +4211,10 @@ namespace MM
                 player,
                 SPEFFECT_ROUND_START_LOCK);
 
-            // Remove the arrival signal left by the previous round.
-            if (!SetEventFlag(
-                FLAG_VOLCANO_LOADED,
-                false))
-            {
-                Log(
-                    "[ERROR] Could not clear Volcano loaded flag.");
-
-                return;
-            }
+            // Remove the local arrival marker left by the previous round.
+            RemoveSpEffectFromChrIns(
+                player,
+                SPEFFECT_VOLCANO_LOADED);
 
             g_activeRoundId =
                 roundParam->second;
@@ -5005,15 +4997,28 @@ namespace MM
             if (g_waitingForVolcanoLoad &&
                 !g_volcanoLoadReported)
             {
-                bool volcanoLoaded = false;
+                const uintptr_t player =
+                    GetLocalPlayerIns();
 
-                if (GetEventFlag(
-                    FLAG_VOLCANO_LOADED,
-                    volcanoLoaded) &&
-                    volcanoLoaded)
+                // debug purposes 
+                if (!player)
                 {
-                    const uintptr_t player =
-                        GetLocalPlayerIns();
+                    Log(
+                        "[ROUND] Waiting for Volcano load: "
+                        "local player unavailable.");
+                }
+                else if (!HasSpEffect(
+                    SPEFFECT_VOLCANO_LOADED))
+                {
+                    Log(
+                        "[ROUND] Waiting for local Volcano marker 500012.");
+                }
+                // debug purposes ^
+
+                if (player &&
+                    HasSpEffect(
+                        SPEFFECT_VOLCANO_LOADED))
+                {
 
                     if (player &&
                         !HasSpEffect(
@@ -5038,35 +5043,23 @@ namespace MM
 
                             Log(
                                 "[ITEM] Volcano startup cleanup requested.");
+
+                            Log(
+                                "[ROUND] Waiting for local cleanup marker 500050 "
+                                "to be consumed.");
                         }
                     }
 
-                    bool cleanupComplete =
+                    // PlayerLoaded only waits for this client's cleanup EMEVD
+                    // to consume its local 500050 request.
+                    //
+                    // Do not gate a local load acknowledgement on network-connected
+                    // item flags. Their replicated state can arrive at different
+                    // times on different clients.
+                    const bool cleanupComplete =
                         g_volcanoItemCleanupRequested &&
                         !HasSpEffect(
                             SPEFFECT_ROUND_CLEANUP_REQUEST);
-
-                    // Event 16009970 clears these shared flags after deleting
-                    // every local pickup presentation.
-                    for (int spawnIndex = 1;
-                        spawnIndex <= 10;
-                        ++spawnIndex)
-                    {
-                        const uint32_t activeFlag =
-                            GetItemActiveFlag(
-                                spawnIndex);
-
-                        bool isActive = false;
-
-                        if (!GetEventFlag(
-                            activeFlag,
-                            isActive) ||
-                            isActive)
-                        {
-                            cleanupComplete = false;
-                            break;
-                        }
-                    }
 
                     // PlayerLoaded is now also an acknowledgement that this
                     // client's old pickup state has been removed.
@@ -5085,6 +5078,11 @@ namespace MM
                             Log(
                                 "[ROUND] Reported PlayerLoaded for round=" +
                                 g_activeRoundId);
+
+                            // Consume this round's local arrival marker.
+                            RemoveSpEffectFromChrIns(
+                                player,
+                                SPEFFECT_VOLCANO_LOADED);
 
                             g_volcanoLoadReported = true;
                             g_waitingForVolcanoLoad = false;
