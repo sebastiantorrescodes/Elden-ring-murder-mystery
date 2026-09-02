@@ -377,13 +377,17 @@ function finishRound(roomId, result, reason) {
   }
 }
 
-function spawnRoundItem(roomId) {
+function spawnRoundItem(
+  roomId,
+  expectedRoundId,
+) {
   const room = rooms.get(roomId);
   const round = roomRounds.get(roomId);
 
   if (
     !room ||
     !round ||
+    round.id !== expectedRoundId ||
     round.state !== 'ACTIVE' ||
     round.roundEnded
   ) {
@@ -945,8 +949,14 @@ wss.on('connection', (ws) => {
 
       // The first item appears 30 seconds after Commence.
       // Subsequent attempts happen every 30 seconds.
+      const itemRoundId =
+        round.id;
+
       round.itemSpawnTimer = setInterval(
-        () => spawnRoundItem(roomId),
+        () => spawnRoundItem(
+          roomId,
+          itemRoundId,
+        ),
         ITEM_SPAWN_INTERVAL_MS,
       );
 
