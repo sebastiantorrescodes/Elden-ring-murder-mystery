@@ -6,7 +6,7 @@ interface WelcomeMessage {
   id: PeerId;
   room: string;
   hostId: PeerId | null;
-  peers: { id: PeerId; displayName: string; ready: boolean }[];
+  peers: { id: PeerId; displayName: string; ready: boolean; micMuted: boolean }[];
 }
 interface PeerJoinedMessage {
   type: 'peer-joined';
@@ -24,6 +24,20 @@ interface PeerReadyMessage {
   type: 'peer-ready';
   id: PeerId;
   ready: boolean;
+}
+// A peer muted/unmuted their own mic (see server.js's 'mic-muted' handler) - purely
+// cosmetic, lets the rest of the room see a muted icon next to that peer's name.
+interface PeerMicMutedMessage {
+  type: 'peer-mic-muted';
+  id: PeerId;
+  micMuted: boolean;
+}
+// The host disconnected and the server promoted someone else (see server.js's
+// close handler) - lets every remaining client pick up host-only UI/actions
+// without needing to leave and rejoin.
+interface HostChangedMessage {
+  type: 'host-changed';
+  hostId: PeerId;
 }
 // The round's shared deadline (host-only to send - see server.js's roomHosts
 // check), broadcast to the whole room including the host, so every client
@@ -71,6 +85,8 @@ type ServerMessage =
   | PeerJoinedMessage
   | PeerLeftMessage
   | PeerReadyMessage
+  | PeerMicMutedMessage
+  | HostChangedMessage
   | RoundTimerMessage
   | RoundStateMessage
   | VolumesMessage
@@ -92,6 +108,8 @@ export interface SignalingClientOptions {
   onPeerJoined?: (id: PeerId, displayName: string) => void;
   onPeerLeft?: (id: PeerId) => void;
   onPeerReady?: (id: PeerId, ready: boolean) => void;
+  onPeerMicMuted?: (id: PeerId, micMuted: boolean) => void;
+  onHostChanged?: (hostId: PeerId) => void;
   onRoundTimer?: (endsAt: number | null) => void;
   onRoundState?: (state: RoundStateMessage['state'], result?: RoundStateMessage['result']) => void;
   onVolumes?: (volumes: Record<PeerId, PeerVolume>) => void;
@@ -141,6 +159,12 @@ export class SignalingClient {
         break;
       case 'peer-ready':
         this.options.onPeerReady?.(msg.id, msg.ready);
+        break;
+      case 'peer-mic-muted':
+        this.options.onPeerMicMuted?.(msg.id, msg.micMuted);
+        break;
+      case 'host-changed':
+        this.options.onHostChanged?.(msg.hostId);
         break;
       case 'round-timer':
         this.options.onRoundTimer?.(msg.endsAt);
@@ -199,8 +223,19 @@ export class SignalingClient {
     this.send({ type: 'command', to, name, params });
   }
 
+  // Only takes effect server-side if this client is the room's host - see server.js.
+  // The target's socket is closed server-side, so they see it as an ordinary
+  // disconnect (onClose) rather than a distinct "you were kicked" message.
+  sendKick(id: PeerId) {
+    this.send({ type: 'kick', id });
+  }
+
   sendReady(ready: boolean) {
     this.send({ type: 'ready', ready });
+  }
+
+  sendMicMuted(micMuted: boolean) {
+    this.send({ type: 'mic-muted', micMuted });
   }
 
   // Host asks the server to begin a coordinated round.
