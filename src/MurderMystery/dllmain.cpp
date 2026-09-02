@@ -5024,13 +5024,53 @@ namespace MM
                         !HasSpEffect(
                             SPEFFECT_ROUND_START_LOCK))
                     {
-                        ApplySpEffectToChrIns(
+                        if (ApplySpEffectToChrIns(
                             player,
-                            SPEFFECT_ROUND_START_LOCK);
+                            SPEFFECT_ROUND_START_LOCK))
+                        {
+                            Log(
+                                "[ROUND] Volcano loaded -> "
+                                "movement locked while waiting for Commence.");
 
-                        Log(
-                            "[ROUND] Volcano loaded -> "
-                            "movement locked while waiting for Commence.");
+                            // Restore HP once at the beginning of the round.
+                            // This happens when 500005 is first applied, not continuously.
+                            PlayerState localPlayer{};
+
+                            if (TryReadPlayerSlot(
+                                0,
+                                localPlayer) &&
+                                localPlayer.valid &&
+                                localPlayer.alive &&
+                                localPlayer.maxHp > 0)
+                            {
+                                if (WritePlayerHp(
+                                    localPlayer.chrIns,
+                                    localPlayer.maxHp))
+                                {
+                                    Log(
+                                        "[ROUND] Starting HP restored to " +
+                                        std::to_string(
+                                            localPlayer.maxHp) +
+                                        ".");
+                                }
+                                else
+                                {
+                                    Log(
+                                        "[ERROR] Failed to restore starting HP.");
+                                }
+                            }
+                            else
+                            {
+                                Log(
+                                    "[ERROR] Could not read local HP for "
+                                    "round-start restoration.");
+                            }
+                        }
+                        else
+                        {
+                            Log(
+                                "[ERROR] Failed to apply round-start lock.");
+                        }
                     }
 
                     // Request cleanup only after Volcano Manor's EMEVD has
