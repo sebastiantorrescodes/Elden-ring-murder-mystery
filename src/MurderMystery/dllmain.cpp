@@ -250,6 +250,8 @@ namespace MM
 
         int hp = -1;
         int maxHp = -1;
+        int fp = -1;
+        int maxFp = -1;
 
         bool valid = false;
         bool alive = false;
@@ -1162,6 +1164,14 @@ namespace MM
                 *reinterpret_cast<int*>(
                     hpBase + 0x13C);
 
+            out.fp =
+                *reinterpret_cast<int*>(
+                    hpBase + 0x148);
+
+            out.maxFp =
+                *reinterpret_cast<int*>(
+                    hpBase + 0x14C);
+
             out.valid = true;
             out.alive = out.hp > 0;
 
@@ -1200,6 +1210,41 @@ namespace MM
             *reinterpret_cast<int*>(
                 hpBase + 0x138) =
                 newHp;
+
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool WritePlayerFp(
+        uintptr_t chrIns,
+        int newFp)
+    {
+        if (!chrIns)
+            return false;
+
+        __try
+        {
+            const uintptr_t chrData =
+                *reinterpret_cast<uintptr_t*>(
+                    chrIns + 0x190);
+
+            if (!chrData)
+                return false;
+
+            const uintptr_t hpBase =
+                *reinterpret_cast<uintptr_t*>(
+                    chrData);
+
+            if (!hpBase)
+                return false;
+
+            *reinterpret_cast<int*>(
+                hpBase + 0x148) =
+                newFp;
 
             return true;
         }
@@ -5024,13 +5069,68 @@ namespace MM
                         !HasSpEffect(
                             SPEFFECT_ROUND_START_LOCK))
                     {
-                        ApplySpEffectToChrIns(
+                        if (ApplySpEffectToChrIns(
                             player,
-                            SPEFFECT_ROUND_START_LOCK);
+                            SPEFFECT_ROUND_START_LOCK))
+                        {
+                            Log(
+                                "[ROUND] Volcano loaded -> "
+                                "movement locked while waiting for Commence.");
 
-                        Log(
-                            "[ROUND] Volcano loaded -> "
-                            "movement locked while waiting for Commence.");
+                            // Restore HP once at the beginning of the round.
+                            // This happens when 500005 is first applied, not continuously.
+                            PlayerState localPlayer{};
+
+                            if (TryReadPlayerSlot(
+                                0,
+                                localPlayer) &&
+                                localPlayer.valid &&
+                                localPlayer.alive &&
+                                localPlayer.maxHp > 0 &&
+                                localPlayer.maxFp >= 0)
+                            {
+                                const bool hpRestored =
+                                    WritePlayerHp(
+                                        localPlayer.chrIns,
+                                        localPlayer.maxHp);
+
+                                const bool fpRestored =
+                                    localPlayer.maxFp >= 0 &&
+                                    WritePlayerFp(
+                                        localPlayer.chrIns,
+                                        localPlayer.maxFp);
+
+                                if (hpRestored && fpRestored)
+                                {
+                                    Log(
+                                        "[ROUND] Starting HP/FP restored to " +
+                                        std::to_string(localPlayer.maxHp) +
+                                        "/" +
+                                        std::to_string(localPlayer.maxFp) +
+                                        ".");
+                                }
+                                else
+                                {
+                                    Log(
+                                        "[ERROR] Round-start resource restoration failed: " +
+                                        std::string(
+                                            hpRestored ? "HP=OK " : "HP=FAILED ") +
+                                        std::string(
+                                            fpRestored ? "FP=OK" : "FP=FAILED"));
+                                }
+                            }
+                            else
+                            {
+                                Log(
+                                    "[ERROR] Could not read local HP for "
+                                    "round-start restoration.");
+                            }
+                        }
+                        else
+                        {
+                            Log(
+                                "[ERROR] Failed to apply round-start lock.");
+                        }
                     }
 
                     // Request cleanup only after Volcano Manor's EMEVD has
