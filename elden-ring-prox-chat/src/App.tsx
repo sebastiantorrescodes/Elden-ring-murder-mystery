@@ -742,7 +742,7 @@ export default function App() {
     navigator.clipboard
       .writeText(activeRoomCode)
       .then(() => setRoomCodeCopied(true))
-      .catch(() => undefined);
+      .catch((): void => undefined);
   };
 
   // Main-process TCP server status + DLL readings - see preload.ts/dll-bridge.d.ts.
