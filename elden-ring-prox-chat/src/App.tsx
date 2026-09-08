@@ -34,6 +34,7 @@ import {
 import { SignalingClient } from './signaling-client';
 import { WebRtcMesh, type SignalPayload } from './webrtc-mesh';
 import volcanoManorImage from '@/assets/ER_Volcano_Manor_Guest_Hall_Roof_Panorama.webp';
+import mmTitleImage from '@/assets/mmTitle.png';
 
 interface PeerRow {
   id: string;
@@ -507,8 +508,7 @@ export default function App() {
       });
       localStreamRef.current = stream;
       await populateAudioDevices(); // labels are blank until permission is granted; refresh now that it is
-    } catch (err) {
-      console.warn('[mic] getUserMedia failed, continuing without a mic', err);
+    } catch {
       localStreamRef.current = null;
     }
 
@@ -742,19 +742,15 @@ export default function App() {
     navigator.clipboard
       .writeText(activeRoomCode)
       .then(() => setRoomCodeCopied(true))
-      .catch((err) => console.warn('[clipboard] copy failed', err));
+      .catch(() => undefined);
   };
 
   // Main-process TCP server status + DLL readings - see preload.ts/dll-bridge.d.ts.
   useEffect(() => {
-    const unsubscribeStatus = window.dllBridge.onStatus((message) => {
-      console.log(message);
-    });
+    const unsubscribeStatus = window.dllBridge.onStatus(() => undefined);
 
     const unsubscribeMmEvent =
       window.dllBridge.onMmEvent((line) => {
-        console.log('[mm-event]', line);
-
         const tokens = line.trim().split(/\s+/);
         const values = new Map<string, string>();
 
@@ -793,11 +789,6 @@ export default function App() {
               parsedIndex > 10
             )
           ) {
-            console.warn(
-              '[mm-event] invalid item pickup index',
-              line,
-            );
-
             return;
           }
 
@@ -810,8 +801,6 @@ export default function App() {
       });
     
     const unsubscribeReading = window.dllBridge.onReading((line) => {
-      console.log('[dll]', line);
-
       const area = parseAreaLine(line);
       if (area) {
         lastAreaRef.current = area;
@@ -927,7 +916,8 @@ export default function App() {
                 <span className="font-display text-lg tracking-wide text-primary">{currentMap.name}</span>
               </div>
             )}
-            <div className="pointer-events-none absolute inset-0 bg-black/0 transition-colors duration-200 group-hover:bg-black/50" />
+            <div className="pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-black/70 to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
+            <div className="pointer-events-none absolute inset-y-0 right-0 w-1/3 bg-gradient-to-l from-black/70 to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
             {MAPS.length > 1 && (
               <>
                 <button
@@ -1043,14 +1033,11 @@ export default function App() {
     )}
     <div className="mx-auto w-full max-w-3xl space-y-4">
       {view !== 'settings' && !isConnected && (
-        <h1 className="text-center font-display font-semibold">
-          <div className="text-6xl tracking-wide text-primary [text-shadow:0_0_20px_var(--primary)]">
-            Elden Ring
-          </div>
-          <div className="text-3xl tracking-[0.2em] text-red-600 [text-shadow:0_0_20px_#dc2626]">
-            Murder Mystery
-          </div>
-        </h1>
+        <img
+          src={mmTitleImage}
+          alt="Elden Ring Murder Mystery"
+          className="mx-auto -my-16 w-full max-w-xl"
+        />
       )}
 
       {view === 'settings' ? (

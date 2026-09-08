@@ -43,16 +43,7 @@ export class WebRtcMesh {
     private localStream: MediaStream | null,
     outputDeviceId?: string,
   ) {
-    console.log(
-      `[webrtc] local stream: ${localStream ? `${localStream.getAudioTracks().length} audio track(s)` : 'none (no mic)'}`,
-    );
-    for (const track of localStream?.getAudioTracks() ?? []) {
-      console.log(`[webrtc] local track "${track.label}" enabled=${track.enabled} muted=${track.muted}`);
-    }
-    this.audioCtx
-      .resume()
-      .then(() => console.log(`[webrtc] audioCtx resumed, state=${this.audioCtx.state}`))
-      .catch((err) => console.warn('[webrtc] audioCtx resume failed', err));
+    this.audioCtx.resume().catch(() => undefined);
 
     if (outputDeviceId) {
       this.setOutputDevice(outputDeviceId);
@@ -138,8 +129,8 @@ export class WebRtcMesh {
     } else if (data.kind === 'ice-candidate') {
       try {
         await peer.connection.addIceCandidate(data.candidate);
-      } catch (err) {
-        console.warn(`[webrtc] ${from}: failed to add ICE candidate`, err);
+      } catch {
+        // late/invalid candidates aren't fatal - the connection can still succeed without them
       }
     }
   }
@@ -176,14 +167,11 @@ export class WebRtcMesh {
   // it's been in Chromium since M110 and this app ships on a much newer Electron/Chromium.
   async setOutputDevice(deviceId: string): Promise<void> {
     const ctx = this.audioCtx as AudioContext & { setSinkId?: (sinkId: string) => Promise<void> };
-    if (!ctx.setSinkId) {
-      console.warn('[webrtc] AudioContext.setSinkId unsupported - output device selection unavailable');
-      return;
-    }
+    if (!ctx.setSinkId) return;
     try {
       await ctx.setSinkId(deviceId);
-    } catch (err) {
-      console.warn(`[webrtc] setSinkId(${deviceId}) failed`, err);
+    } catch {
+      // output device selection just won't take effect
     }
   }
 
@@ -238,10 +226,6 @@ export class WebRtcMesh {
 
     connection.addEventListener('track', (event) => {
       const [remoteStream] = event.streams;
-      console.log(
-        `[webrtc] ${peerId} received remote ${event.track.kind} track, ` +
-          `audioCtx state=${this.audioCtx.state}, current gain=${gainNode.gain.value}`,
-      );
       entry.audioSource?.disconnect(); // renegotiation can refire this - don't leak the old node
       const audioSource = this.audioCtx.createMediaStreamSource(remoteStream);
       audioSource.connect(pannerNode);
@@ -256,15 +240,9 @@ export class WebRtcMesh {
         const pullElement = new Audio();
         pullElement.muted = true;
         pullElement.srcObject = remoteStream;
-        pullElement.play().catch((err) => {
-          console.warn(`[webrtc] ${peerId} hidden pull element play() failed`, err);
-        });
+        pullElement.play().catch(() => undefined);
         entry.pullElement = pullElement;
       }
-    });
-
-    connection.addEventListener('connectionstatechange', () => {
-      console.log(`[webrtc] ${peerId} connection state: ${connection.connectionState}`);
     });
 
     return entry;

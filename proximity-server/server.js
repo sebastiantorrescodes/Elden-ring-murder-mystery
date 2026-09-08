@@ -77,6 +77,12 @@ const rooms = new Map();
 const roomHosts = new Map();
 // roomCode -> active coordinated round
 const roomRounds = new Map();
+// roomCode -> Set<peerId> kicked from that room - checked on 'join' so a kicked
+// peer can't just immediately reconnect. Keyed by the same client-supplied peerId
+// the rest of the protocol trusts (see getOrCreatePlayerId on the client), so it's
+// no stronger than that trust boundary already is (clearing localStorage evades
+// it) - same caveat as the host-only checks above, kept simple until needed.
+const roomBans = new Map();
 
 // Excludes visually-ambiguous characters (0/O, 1/I/L) - this code gets read off one
 // screen and typed into another, so a typo should just mean "room not found," not a
@@ -580,6 +586,13 @@ wss.on('connection', (ws) => {
       }
 
       const requestedId = msg.id || `peer-${Math.random().toString(36).slice(2, 8)}`;
+
+      if (roomBans.get(targetRoomId)?.has(requestedId)) {
+        log(`[join] rejected: id "${requestedId}" was kicked from room "${targetRoomId}"`);
+        ws.close(4005, 'kicked from room');
+        return;
+      }
+
       // Reject rather than silently overwrite - two peers sharing an id would
       // otherwise have position/volume/signaling for that id randomly cross-routed
       // between their two sockets depending on which joined last.
@@ -1022,6 +1035,12 @@ wss.on('connection', (ws) => {
       const target = room.get(msg.id);
       if (!target) return;
       log(`[kick] host "${peerId}" kicked "${msg.id}" from room "${roomId}"`);
+      let banned = roomBans.get(roomId);
+      if (!banned) {
+        banned = new Set();
+        roomBans.set(roomId, banned);
+      }
+      banned.add(msg.id);
       // Closing the target's own socket fires its own 'close' handler below,
       // which already does the full leave cleanup (room removal, peer-left
       // broadcast, ending an in-progress round if they were a participant) -
@@ -1046,6 +1065,7 @@ wss.on('connection', (ws) => {
       rooms.delete(roomId);
       roomHosts.delete(roomId);
       roomRounds.delete(roomId);
+      roomBans.delete(roomId);
     } else {
       broadcast(room, { type: 'peer-left', id: peerId });
       // The host disconnected but the room isn't empty - promote whoever's been

@@ -40,7 +40,7 @@
     "eslint-plugin-import": "^2.32.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
-    "vite": "^5.4.21"
+    "vite": "^7.3.6"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.15",

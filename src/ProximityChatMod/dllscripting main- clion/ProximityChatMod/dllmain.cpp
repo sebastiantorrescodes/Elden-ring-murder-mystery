@@ -19,9 +19,6 @@ constexpr int kLocalPlayerSlot = 0;
 
 DWORD WINAPI MainThread(LPVOID lpParam)
 {
-    AllocConsole();
-    FILE* f;
-    freopen_s(&f, "CONOUT$", "w", stdout);
     std::cout << "Open" << std::endl;
     std::cout << "CURRENT FUNCTIONS" << std::endl;
     std::cout << "_________________" << std::endl;
