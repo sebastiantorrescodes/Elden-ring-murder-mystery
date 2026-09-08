@@ -43,7 +43,7 @@ export class WebRtcMesh {
     private localStream: MediaStream | null,
     outputDeviceId?: string,
   ) {
-    this.audioCtx.resume().catch(() => undefined);
+    this.audioCtx.resume().catch((): void => undefined);
 
     if (outputDeviceId) {
       this.setOutputDevice(outputDeviceId);
@@ -240,7 +240,7 @@ export class WebRtcMesh {
         const pullElement = new Audio();
         pullElement.muted = true;
         pullElement.srcObject = remoteStream;
-        pullElement.play().catch(() => undefined);
+        pullElement.play().catch((): void => undefined);
         entry.pullElement = pullElement;
       }
     });

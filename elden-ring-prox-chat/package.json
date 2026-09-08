@@ -1,6 +1,6 @@
 {
   "name": "elden-ring-prox-chat",
-  "productName": "elden-ring-prox-chat",
+  "productName": "Murder Mystery",
   "version": "1.0.0",
   "description": "My Electron application description",
   "main": ".vite/build/main.js",

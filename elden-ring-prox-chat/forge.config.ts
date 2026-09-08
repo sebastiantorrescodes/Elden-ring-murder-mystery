@@ -16,10 +16,11 @@ const config: ForgeConfig = {
   outDir: 'out-build',
   packagerConfig: {
     asar: true,
+    icon: './assets/mmicon',
   },
   rebuildConfig: {},
   makers: [
-    new MakerSquirrel({}),
+    new MakerSquirrel({ setupIcon: './assets/mmicon.ico' }),
     new MakerZIP({}, ['darwin']),
     new MakerRpm({}),
     new MakerDeb({}),

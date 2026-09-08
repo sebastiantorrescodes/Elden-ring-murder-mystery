@@ -52,6 +52,10 @@ const createWindow = () => {
     resizable: false,
     maximizable: false,
     fullscreenable: false,
+    // Packaged builds get their icon from packagerConfig.icon (forge.config.ts) via
+    // the exe's own resource icon - this only matters for `npm start`, where the
+    // process is the generic electron.exe and would otherwise show Electron's icon.
+    icon: path.join(__dirname, '../../assets/mmicon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
     },

@@ -5,7 +5,6 @@
 #include "WorldChrMan.h"
 #include <iostream>
 #include "TcpTestClient.h"
-#include "GameVersion.h"
 #include <sstream>
 
 // How many player slots to probe each poll cycle when broadcasting to the TCP test listener.
@@ -19,20 +18,6 @@ constexpr int kLocalPlayerSlot = 0;
 
 DWORD WINAPI MainThread(LPVOID lpParam)
 {
-    std::cout << "Open" << std::endl;
-    std::cout << "CURRENT FUNCTIONS" << std::endl;
-    std::cout << "_________________" << std::endl;
-    std::cout << "numpad3- print coords/area/camera/blockId for local player (and a safe probe of slots 1-3)" << std::endl;
-    std::cout << "background- polls this client's own (local player) slot every " << kTcpPollIntervalMs << "ms and streams coords+hp+area+camera+blockId to 127.0.0.1:9191 (tcp-test-listener.js)" << std::endl;
-
-    uint64_t gameVersion = GetGameVersion();
-    std::cout << "Game version: "
-               << ((gameVersion >> 48) & 0xFFFF) << "."
-               << ((gameVersion >> 32) & 0xFFFF) << "."
-               << ((gameVersion >> 16) & 0xFFFF) << "."
-               << (gameVersion & 0xFFFF)
-               << " (raw: 0x" << std::hex << gameVersion << std::dec << ")" << std::endl;
-
     WorldChrMan mainBase = WorldChrMan::Make();
 
     TcpTestClient tcpTestClient("127.0.0.1", 9191);
