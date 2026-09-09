@@ -468,6 +468,25 @@ function spawnRoundItem(
   );
 }
 
+function spawnSheriffDrop(room, round, reason) {
+  const spawnIndex =
+    1 + crypto.randomInt(SHERIFF_DROP_POINT_COUNT);
+
+  round.sheriffDropIndex = spawnIndex;
+
+  for (const id of round.participantIds) {
+    sendCommand(room, id, 'SheriffDrop', {
+      round: round.id,
+      spawn: String(spawnIndex),
+    });
+  }
+
+  log(
+    `[sheriff] drop=${spawnIndex} reason="${reason}" ` +
+    `round="${round.id}"`,
+  );
+}
+
 function evaluateRoundState(roomId) {
   const round = roomRounds.get(roomId);
 
@@ -963,27 +982,43 @@ wss.on('connection', (ws) => {
       if (msg.name === 'PlayerDied') {
         if (round.state !== 'ACTIVE' || round.roundEnded) return;
         if (round.aliveByPlayerId.get(peerId) === false) return;
+        if (
+          msg.cause !== undefined &&
+          msg.cause !== 'Sheriff' &&
+          msg.cause !== 'Other'
+        ) return;
 
+        const victimRole = round.roleByPlayerId.get(peerId);
         round.aliveByPlayerId.set(peerId, false);
-        log(`[game-event] PlayerDied "${peerId}" round="${round.id}"`);
+        log(
+          `[game-event] PlayerDied "${peerId}" cause=${msg.cause || 'Other'} ` +
+          `round="${round.id}"`,
+        );
 
-        if (round.roleByPlayerId.get(peerId) === 'Sheriff') {
-          const spawnIndex =
-            1 + crypto.randomInt(SHERIFF_DROP_POINT_COUNT);
-
-          round.sheriffDropIndex = spawnIndex;
-
-          for (const id of round.participantIds) {
-            sendCommand(room, id, 'SheriffDrop', {
-              round: round.id,
-              spawn: String(spawnIndex),
-            });
-          }
-
-          log(
-            `[sheriff] died="${peerId}" drop=${spawnIndex} ` +
-            `round="${round.id}"`,
+        if (victimRole === 'Innocent' && msg.cause === 'Sheriff') {
+          const sheriffId = round.participantIds.find(
+            (id) =>
+              round.roleByPlayerId.get(id) === 'Sheriff' &&
+              round.aliveByPlayerId.get(id) === true,
           );
+
+          if (sheriffId) {
+            // The server owns the role transition: remove the guilty Sheriff's
+            // loadout/identity, then make their kit available to Innocents.
+            round.roleByPlayerId.set(sheriffId, 'Innocent');
+            sendCommand(room, sheriffId, 'SetRole', {
+              round: round.id,
+              role: 'Innocent',
+            });
+
+            spawnSheriffDrop(
+              room,
+              round,
+              `Sheriff ${sheriffId} killed Innocent ${peerId}`,
+            );
+          }
+        } else if (victimRole === 'Sheriff') {
+          spawnSheriffDrop(room, round, `Sheriff ${peerId} died`);
         }
 
         evaluateRoundState(roomId);
