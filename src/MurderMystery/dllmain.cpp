@@ -171,14 +171,9 @@ namespace MM
     // Sheriff punishment logic
     // --------------------------------------------------------
 
-    int sheriffWrongKills = 0;
-
     constexpr int MAX_MM_PLAYERS = 16;
-
-    bool sheriffTrackedAlive[MAX_MM_PLAYERS]{};
-    bool sheriffTrackedInitialized[MAX_MM_PLAYERS]{};
-    bool sheriffTargetWasInnocent[MAX_MM_PLAYERS]{};
-    bool sheriffTargetHitBySheriff[MAX_MM_PLAYERS]{};
+    constexpr ULONGLONG SHERIFF_KILL_CREDIT_WINDOW_MS = 2500;
+    ULONGLONG g_lastLocalSheriffHitMs = 0;
 
     // --------------------------------------------------------
 
@@ -4055,20 +4050,9 @@ namespace MM
         if (role == Role::Sheriff &&
             oldRole != Role::Sheriff)
         {
-            sheriffWrongKills = 0;
-
-            for (int i = 0; i < MAX_MM_PLAYERS; ++i)
-            {
-                sheriffTrackedAlive[i] = false;
-                sheriffTrackedInitialized[i] = false;
-
-                sheriffTargetWasInnocent[i] = false;
-                sheriffTargetHitBySheriff[i] = false;
-            }
-
             Log(
                 "[SHERIFF] New Sheriff -> "
-                "wrong-kill tracking reset.");
+                "role state initialized.");
         }
 
         // --------------------------------------------------------
@@ -4360,6 +4344,7 @@ namespace MM
             g_volcanoLoadReported = false;
             g_roundActive = false;
             g_playerDeathReported = false;
+            g_lastLocalSheriffHitMs = 0;
             g_volcanoItemCleanupRequested = false;
             ClearSheriffDropFlags();
 
@@ -4516,6 +4501,7 @@ namespace MM
             g_volcanoLoadReported = true;
             g_roundActive = true;
             g_playerDeathReported = false;
+            g_lastLocalSheriffHitMs = 0;
 
             const uintptr_t player =
                 GetLocalPlayerIns();
@@ -6060,20 +6046,42 @@ namespace MM
 
             if (TryReadPlayerSlot(0, localPlayer))
             {
+                const ULONGLONG deathCheckNow = GetTickCount64();
+
+                // 500060 is applied to the victim by Sheriff attacks. Latch the
+                // observation locally because active SpEffects may be cleared as
+                // part of the death transition before the next polling pass.
+                if (localPlayer.alive &&
+                    ChrInsHasSpEffect(
+                        localPlayer.chrIns,
+                        SPEFFECT_SHERIFF_HIT_MARKER))
+                {
+                    g_lastLocalSheriffHitMs = deathCheckNow;
+                }
+
                 if (g_roundActive &&
                     !g_playerDeathReported &&
                     !localPlayer.alive)
                 {
+                    const bool sheriffAttributed =
+                        g_lastLocalSheriffHitMs != 0 &&
+                        deathCheckNow - g_lastLocalSheriffHitMs <=
+                            SHERIFF_KILL_CREDIT_WINDOW_MS;
+
                     const std::string eventLine =
                         "event=PlayerDied round=" +
-                        g_activeRoundId;
+                        g_activeRoundId +
+                        " cause=" +
+                        (sheriffAttributed ? "Sheriff" : "Other");
 
                     if (mmTcpClient.sendLine(eventLine))
                     {
                         g_playerDeathReported = true;
                         Log(
                             "[ROUND] Reported PlayerDied for round=" +
-                            g_activeRoundId);
+                            g_activeRoundId +
+                            " cause=" +
+                            (sheriffAttributed ? "Sheriff" : "Other"));
                     }
                 }
 
@@ -6175,139 +6183,6 @@ namespace MM
                     pearldrakeTracking = false;
                     pearldrakeBreakRequested = false;
                     pearldrakeLastHp = -1;
-                }
-            }
-
-            if (currentRole == Role::Sheriff)
-            {
-                for (int slot = 1;
-                    slot < MAX_MM_PLAYERS;
-                    ++slot)
-                {
-                    PlayerState target{};
-
-                    if (!TryReadPlayerSlot(
-                        slot,
-                        target))
-                    {
-                        sheriffTrackedInitialized[slot] = false;
-                        sheriffTargetWasInnocent[slot] = false;
-                        sheriffTargetHitBySheriff[slot] = false;
-
-                        continue;
-                    }
-
-                    // ----------------------------------------------------
-                    // Latch important information WHILE the target
-                    // still exists normally in multiplayer.
-                    // ----------------------------------------------------
-
-                    if (ChrInsHasSpEffect(
-                        target.chrIns,
-                        SPEFFECT_INNOCENT))
-                    {
-                        sheriffTargetWasInnocent[slot] = true;
-                    }
-
-                    if (ChrInsHasSpEffect(
-                        target.chrIns,
-                        SPEFFECT_SHERIFF_HIT_MARKER))
-                    {
-                        sheriffTargetHitBySheriff[slot] = true;
-                    }
-
-                    if (!sheriffTrackedInitialized[slot])
-                    {
-                        sheriffTrackedAlive[slot] =
-                            target.alive;
-
-                        sheriffTrackedInitialized[slot] =
-                            true;
-
-                        continue;
-                    }
-
-                    const bool justDied =
-                        sheriffTrackedAlive[slot] &&
-                        !target.alive;
-
-                    if (justDied)
-                    {
-                        Log(
-                            "[SHERIFF DEBUG] Target died. "
-                            "innocentLatched=" +
-                            std::string(
-                                sheriffTargetWasInnocent[slot]
-                                ? "YES"
-                                : "NO") +
-                            " sheriffHitLatched=" +
-                            std::string(
-                                sheriffTargetHitBySheriff[slot]
-                                ? "YES"
-                                : "NO"));
-
-                        if (sheriffTargetWasInnocent[slot] &&
-                            sheriffTargetHitBySheriff[slot])
-                        {
-                            ++sheriffWrongKills;
-
-                            Log(
-                                "[SHERIFF] Innocent kill detected. "
-                                "Wrong kills=" +
-                                std::to_string(
-                                    sheriffWrongKills));
-
-                            if (sheriffWrongKills == 1)
-                            {
-                                PlayerState sheriff{};
-
-                                if (TryReadPlayerSlot(
-                                    0,
-                                    sheriff))
-                                {
-                                    const int halfHp =
-                                        (sheriff.maxHp + 1) / 2;
-
-                                    if (sheriff.hp > halfHp)
-                                    {
-                                        if (WritePlayerHp(
-                                            sheriff.chrIns,
-                                            halfHp))
-                                        {
-                                            Log(
-                                                "[SHERIFF] First wrong kill -> "
-                                                "HP reduced to 50%.");
-                                        }
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                SetEventFlag(
-                                    16009979,
-                                    true);
-                            }
-                        }
-
-                        // Death consumed this victim's attribution.
-                        sheriffTargetWasInnocent[slot] = false;
-                        sheriffTargetHitBySheriff[slot] = false;
-                    }
-
-                    // If they are alive again, start with clean hit attribution.
-                    if (!sheriffTrackedAlive[slot] &&
-                        target.alive)
-                    {
-                        sheriffTargetWasInnocent[slot] =
-                            ChrInsHasSpEffect(
-                                target.chrIns,
-                                SPEFFECT_INNOCENT);
-
-                        sheriffTargetHitBySheriff[slot] = false;
-                    }
-
-                    sheriffTrackedAlive[slot] =
-                        target.alive;
                 }
             }
 

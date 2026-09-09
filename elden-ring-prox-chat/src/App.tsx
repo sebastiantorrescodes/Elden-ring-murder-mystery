@@ -817,6 +817,13 @@ export default function App() {
             eventName === 'ItemPickedUp'
               ? Number(values.get('index'))
               : undefined;
+          const deathCause =
+            eventName === 'PlayerDied' &&
+            values.get('cause') === 'Sheriff'
+              ? 'Sheriff'
+              : eventName === 'PlayerDied'
+                ? 'Other'
+                : undefined;
 
           if (
             eventName === 'ItemPickedUp' &&
@@ -834,6 +841,7 @@ export default function App() {
             eventName,
             roundId,
             parsedIndex,
+            deathCause,
           );
         }
       });

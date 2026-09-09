@@ -260,6 +260,7 @@ export class SignalingClient {
       | 'SheriffKitPickedUp',
     roundId: string,
     index?: number,
+    cause?: 'Sheriff' | 'Other',
   ) {
     this.send({
       type: 'game-event',
@@ -267,6 +268,9 @@ export class SignalingClient {
       roundId,
       ...(index !== undefined
         ? { index }
+        : {}),
+      ...(cause !== undefined
+        ? { cause }
         : {}),
     });
   }
