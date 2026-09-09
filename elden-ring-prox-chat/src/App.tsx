@@ -871,6 +871,7 @@ export default function App() {
           lastAreaRef.current?.mapX,
           lastAreaRef.current?.mapY,
           reading.hp,
+          lastAreaRef.current?.oriDeg,
         );
       }
     });

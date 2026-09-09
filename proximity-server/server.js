@@ -70,7 +70,7 @@ function resolveDisplayName(value) {
   return 'Player';
 }
 
-// roomCode -> Map<peerId, { ws, displayName, x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY }>
+// roomCode -> Map<peerId, { ws, displayName, x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY, oriDeg }>
 const rooms = new Map();
 // roomCode -> peerId of whoever hosted it. If the host disconnects and the room
 // isn't empty, the close handler below promotes the longest-remaining peer rather
@@ -127,6 +127,7 @@ function makeInitialPeerState(ws, displayName) {
     mapX: undefined,
     mapY: undefined,
     hp: undefined,
+    oriDeg: undefined,
   };
 }
 
@@ -661,6 +662,10 @@ wss.on('connection', (ws) => {
       // hp === 0 mutes this peer for everyone in the room (see computeGain) -
       // undefined (older client, manual test controls) is left un-mutable.
       peer.hp = isFiniteNumber(msg.hp) ? msg.hp : undefined;
+      // Character facing in degrees (see the Location comment in WorldChrMan.h) -
+      // stored but not yet consumed by computeGain/computeRelativeOffset, which
+      // still derive the listener's facing from yawCos/yawSin instead.
+      peer.oriDeg = isFiniteNumber(msg.oriDeg) ? msg.oriDeg : undefined;
       broadcastVolumes(room);
       return;
     }

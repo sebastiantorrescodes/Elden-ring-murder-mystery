@@ -6,6 +6,21 @@
 #include <iostream>
 #include "TcpTestClient.h"
 #include <sstream>
+#include <cstdio>
+
+// eldenring.exe is a GUI-subsystem process with no console of its own, so std::cout
+// from this DLL has nowhere to go until a console is created and stdout/stderr are
+// redirected into it. Ported from the old Visual Studio build's Logger.h, which did
+// the same AllocConsole+freopen dance (there, gated to debug builds only - kept
+// unconditional here since this whole DLL is a debug/dev tool).
+static void AttachDebugConsole()
+{
+    AllocConsole();
+    FILE* filePtr;
+    freopen_s(&filePtr, "CONOUT$", "w", stdout);
+    freopen_s(&filePtr, "CONOUT$", "w", stderr);
+    SetConsoleTitleA("ProximityChatMod Debug Console");
+}
 
 // How many player slots to probe each poll cycle when broadcasting to the TCP test listener.
 // Currently unused by the poll loop below (only the local slot is sent - see the
@@ -83,7 +98,7 @@ DWORD WINAPI MainThread(LPVOID lpParam)
             if (WorldChrMan::tryReadLocation(loc)) {
                 std::ostringstream areaLine;
                 areaLine << "area mapId=" << loc.mapId << " underground=" << loc.underground
-                          << " mapX=" << loc.x << " mapY=" << loc.y;
+                          << " mapX=" << loc.x << " mapY=" << loc.y << " oriDeg=" << loc.oriDeg;
                 tcpTestClient.sendLine(areaLine.str());
             }
 
@@ -116,6 +131,7 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID)
 	if (reason == DLL_PROCESS_ATTACH)
 	{
 		DisableThreadLibraryCalls(module);
+		AttachDebugConsole();
 		CreateThread(0, 0, &MainThread, 0, 0, NULL);
 	}
 	return 1;
