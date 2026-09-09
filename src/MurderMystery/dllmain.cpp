@@ -4000,34 +4000,46 @@ namespace MM
     }
 
     bool ApplyInnocentLoadout()
-    {
-        ClearGreed();
+{
+    ClearGreed();
 
+    const bool weaponOk =
         UnequipWeaponSlot(
             SLOT_SECONDARY_RIGHT);
 
-        UnequipGoodsSlot(
-            SLOT_QUICK_ITEM_1);
-        UnequipGoodsItemEverywhere(
-            MIMIC_VEIL);
+    UnequipGoodsSlot(
+        SLOT_QUICK_ITEM_1);
 
+    UnequipGoodsItemEverywhere(
+        MIMIC_VEIL);
+
+    const bool magicOk =
         ClearRoleMagic();
 
-        const bool runeOk =
-            EquipGoodsByItemId(
-                SLOT_GREAT_RUNE,
-                GODRICK_GREAT_RUNE,
-                true);
+    const bool runeOk =
+        EquipGoodsByItemId(
+            SLOT_GREAT_RUNE,
+            GODRICK_GREAT_RUNE,
+            true);
 
-        if (!runeOk)
-        {
-            Log("[ROLE] Innocent loadout not ready; will retry.");
-            return false;
-        }
+    if (!weaponOk || !magicOk || !runeOk)
+    {
+        Log(
+            "[ROLE] Innocent loadout not ready; "
+            "weaponOk=" +
+            std::to_string(weaponOk) +
+            " magicOk=" +
+            std::to_string(magicOk) +
+            " runeOk=" +
+            std::to_string(runeOk) +
+            "; will retry.");
 
-        Log("[ROLE] Innocent loadout applied.");
-        return true;
+        return false;
     }
+
+    Log("[ROLE] Innocent loadout applied.");
+    return true;
+}
 
     bool SetLocalRole(Role role)
     {
