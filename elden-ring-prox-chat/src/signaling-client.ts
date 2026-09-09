@@ -234,6 +234,10 @@ export class SignalingClient {
     this.send({ type: 'ready', ready });
   }
 
+  sendLobbyState(inRoundtable: boolean) {
+    this.send({ type: 'lobby-state', inRoundtable });
+  }
+
   sendMicMuted(micMuted: boolean) {
     this.send({ type: 'mic-muted', micMuted });
   }

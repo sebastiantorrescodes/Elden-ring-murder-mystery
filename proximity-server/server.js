@@ -113,6 +113,7 @@ function makeInitialPeerState(ws, displayName) {
     ws,
     displayName,
     ready: false,
+    inRoundtable: false,
     micMuted: false,
     x: undefined,
     y: undefined,
@@ -677,11 +678,29 @@ wss.on('connection', (ws) => {
       if (typeof msg.ready !== 'boolean') return;
       const peer = room.get(peerId);
       if (!peer) return;
-      peer.ready = msg.ready;
+      // A client may only enter Ready while its DLL/EMEVD has confirmed that
+      // its local player is actually loaded in Roundtable Hold.
+      peer.ready = msg.ready && peer.inRoundtable === true;
       // Broadcast to the whole room including the sender - keeps ready state
       // fully server-authoritative (same reasoning as broadcastVolumes) instead
       // of each client also optimistically updating its own local copy.
-      broadcast(room, { type: 'peer-ready', id: peerId, ready: msg.ready });
+      broadcast(room, { type: 'peer-ready', id: peerId, ready: peer.ready });
+      return;
+    }
+
+    if (msg.type === 'lobby-state') {
+      if (typeof msg.inRoundtable !== 'boolean') return;
+      const peer = room.get(peerId);
+      if (!peer) return;
+
+      peer.inRoundtable = msg.inRoundtable;
+
+      // Leaving Roundtable always revokes readiness. This also covers a manual
+      // warp or disconnect from the map before the host starts the round.
+      if (!peer.inRoundtable && peer.ready) {
+        peer.ready = false;
+        broadcast(room, { type: 'peer-ready', id: peerId, ready: false });
+      }
       return;
     }
 
@@ -740,7 +759,9 @@ wss.on('connection', (ws) => {
 
       const everyoneReady =
         participantIds.every(
-          (id) => room.get(id)?.ready === true,
+          (id) =>
+            room.get(id)?.ready === true &&
+            room.get(id)?.inRoundtable === true,
         );
 
       if (!everyoneReady) {

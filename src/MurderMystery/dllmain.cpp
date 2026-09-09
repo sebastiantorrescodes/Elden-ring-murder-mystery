@@ -224,6 +224,9 @@ namespace MM
     constexpr int32_t SPEFFECT_VOLCANO_LOADED =
         500012;
 
+    constexpr int32_t SPEFFECT_IN_ROUNDTABLE =
+        500013;
+
     // --------------------------------------------------------
 
     enum class Role
@@ -324,6 +327,31 @@ namespace MM
     bool g_volcanoItemCleanupRequested = false;
     bool g_playerDeathReported = false;
     bool g_itemPointWasActive[10]{};
+    bool g_startupLobbyRequested = false;
+    bool g_lobbyStateInitialized = false;
+    bool g_lastInRoundtable = false;
+    ULONGLONG g_lastLobbyStateReportMs = 0;
+    bool g_keyWasDown[256]{};
+
+    // GetAsyncKeyState's low bit ("pressed since the previous query") is not
+    // reliable on modern preemptive Windows and can be consumed/set by another
+    // process. Detect a press from the physical high-bit transition instead so
+    // debug hotkeys cannot fire without their key actually going down.
+    bool WasKeyPressed(int virtualKey)
+    {
+        if (virtualKey < 0 || virtualKey >= 256)
+        {
+            return false;
+        }
+
+        const bool isDown =
+            (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+        const bool pressed =
+            isDown && !g_keyWasDown[virtualKey];
+
+        g_keyWasDown[virtualKey] = isDown;
+        return pressed;
+    }
 
     // --------------------------------------------------------
     // Native randomizer-style auto-equip
@@ -2003,9 +2031,9 @@ namespace MM
     constexpr int SHERIFF_DROP_POINT_COUNT = 13;
 
     constexpr uint32_t SHERIFF_DROP_FLAGS[SHERIFF_DROP_POINT_COUNT] = {
-        16009890u, 16009891u, 16009892u, 16009893u, 16009894u,
-        16009895u, 16009896u, 16009897u, 16009898u, 16009899u,
-        16009920u, 16009921u, 16009922u,
+        16009600u, 16009601u, 16009602u, 16009603u, 16009604u,
+        16009605u, 16009606u, 16009607u, 16009608u, 16009609u,
+        16009610u, 16009611u, 16009612u,
     };
 
     bool ClearSheriffDropFlags()
@@ -2030,6 +2058,12 @@ namespace MM
         }
 
         ClearSheriffDropFlags();
+
+        // Give every Restart EMEVD slot time to observe its flag OFF and remove
+        // the previous VFX before a (possibly identical) point is activated.
+        // Without this, rapid F1 testing can collapse several selections into
+        // one game-frame and make the drop appear not to move.
+        Sleep(50);
 
         return SetEventFlag(
             SHERIFF_DROP_FLAGS[spawnIndex - 1],
@@ -4242,6 +4276,28 @@ namespace MM
                 return;
             }
 
+            // Never let StartGame cancel the one-shot startup return before the
+            // Common EMEVD has actually landed this player in Roundtable. The
+            // app/server also gate Ready, but this is the final DLL-side guard
+            // against an old client, stale Ready state, or command race.
+            if (!HasSpEffect(SPEFFECT_IN_ROUNDTABLE))
+            {
+                const uintptr_t player =
+                    GetLocalPlayerIns();
+
+                if (player)
+                {
+                    ApplySpEffectToChrIns(
+                        player,
+                        SPEFFECT_RETURN_TO_HUB_REQUEST);
+                }
+
+                Log(
+                    "[ROUND] StartGame rejected: player is not confirmed "
+                    "in Roundtable; return request restored.");
+                return;
+            }
+
             // Ignore a duplicate delivery for the current round.
             if (g_activeRoundId == roundParam->second &&
                 g_waitingForVolcanoLoad)
@@ -5114,6 +5170,47 @@ namespace MM
                 }
             }
 
+            const uintptr_t currentPlayer =
+                GetLocalPlayerIns();
+
+            // The global Common EMEVD consumes 500011 from any map. Request it
+            // once per DLL lifetime so launching a save outside Roundtable first
+            // returns the player to the lobby.
+            if (currentPlayer && !g_startupLobbyRequested)
+            {
+                if (ApplySpEffectToChrIns(
+                    currentPlayer,
+                    SPEFFECT_RETURN_TO_HUB_REQUEST))
+                {
+                    g_startupLobbyRequested = true;
+                    Log("[LOBBY] Startup return to Roundtable requested.");
+                }
+            }
+
+            if (currentPlayer)
+            {
+                const bool inRoundtable =
+                    HasSpEffect(SPEFFECT_IN_ROUNDTABLE);
+                const ULONGLONG now = GetTickCount64();
+
+                // Repeat the state periodically because the Electron TCP bridge
+                // may connect after the DLL made its first observation.
+                if (!g_lobbyStateInitialized ||
+                    inRoundtable != g_lastInRoundtable ||
+                    now - g_lastLobbyStateReportMs >= 2000)
+                {
+                    if (mmTcpClient.sendLine(
+                        std::string("event=LobbyState inRoundtable=") +
+                        (inRoundtable ? "1" : "0")))
+                    {
+                        g_lastLobbyStateReportMs = now;
+                    }
+
+                    g_lastInRoundtable = inRoundtable;
+                    g_lobbyStateInitialized = true;
+                }
+            }
+
             // The m11_10_00_00 warp event clears its spawn flag the instant it
             // fires WarpPlayer (see m11_10_00_00.emevd), so watching that flag
             // go back OFF is a reliable "the player has landed at Volcano
@@ -5586,7 +5683,14 @@ namespace MM
                     {
                         Log(
                             "[SHERIFF] Innocent claimed "
-                            "dropped Sheriff kit; requesting server promotion.");
+                            "dropped Sheriff kit.");
+
+                        // Apply the Sheriff role immediately. A real coordinated
+                        // drop is also reported below so the server updates its
+                        // authoritative role table and clears every client's VFX.
+                        // An F1-only local test has no server-side drop record, but
+                        // must still prove that the pickup/role transition works.
+                        SetLocalRole(Role::Sheriff);
 
                         mmTcpClient.sendLine(
                             "event=SheriffKitPickedUp round=" +
@@ -5595,7 +5699,7 @@ namespace MM
                 }
             }
 
-            if (GetAsyncKeyState(VK_F1) & 1)
+            if (WasKeyPressed(VK_F1))
             {
                 const int spawnIndex =
                     1 + (rand() % SHERIFF_DROP_POINT_COUNT);
@@ -5607,22 +5711,22 @@ namespace MM
                     std::to_string(spawnIndex) + ".");
             }
 
-            if (GetAsyncKeyState(VK_F2) & 1)
+            if (WasKeyPressed(VK_F2))
             {
                 ExecuteCommand(MMCommand::SetInnocent);
             }
 
-            if (GetAsyncKeyState(VK_F3) & 1)
+            if (WasKeyPressed(VK_F3))
             {
                 ExecuteCommand(MMCommand::SetSheriff);
             }
 
-            if (GetAsyncKeyState(VK_F4) & 1)
+            if (WasKeyPressed(VK_F4))
             {
                 ExecuteCommand(MMCommand::SetMurderer);
             }
 
-            if (GetAsyncKeyState(VK_F5) & 1)
+            if (WasKeyPressed(VK_F5))
             {
                 const uintptr_t player =
                     GetLocalPlayerIns();
@@ -5637,7 +5741,7 @@ namespace MM
                 }
             }
 
-            if (GetAsyncKeyState(VK_F6) & 1)
+            if (WasKeyPressed(VK_F6))
             {
                 const uintptr_t player =
                     GetLocalPlayerIns();
@@ -5652,7 +5756,7 @@ namespace MM
                 }
             }
 
-            if (GetAsyncKeyState(VK_F7) & 1)
+            if (WasKeyPressed(VK_F7))
             {
                 const uintptr_t player =
                     GetLocalPlayerIns();
@@ -5669,7 +5773,7 @@ namespace MM
 
 
             // F8 = COMMENCE
-            if (GetAsyncKeyState(VK_F8) & 1)
+            if (WasKeyPressed(VK_F8))
             {
                 const uintptr_t player =
                     GetLocalPlayerIns();
@@ -5686,7 +5790,7 @@ namespace MM
 
 
             // F9 = return to Roundtable
-            if (GetAsyncKeyState(VK_F9) & 1)
+            if (WasKeyPressed(VK_F9))
             {
                 const uintptr_t player =
                     GetLocalPlayerIns();
@@ -5713,17 +5817,17 @@ namespace MM
                 }
             }
 
-            if (GetAsyncKeyState(VK_F10) & 1)
+            if (WasKeyPressed(VK_F10))
             {
                 RequestRandomSpawn();
             }
 
-            if (GetAsyncKeyState(VK_F11) & 1)
+            if (WasKeyPressed(VK_F11))
             {
                 RequestRandomItemSpawn();
             }
 
-            if (GetAsyncKeyState(VK_F12) & 1)
+            if (WasKeyPressed(VK_F12))
             {
                 Log("[TEST] F12 -> Round cleanup.");
 
