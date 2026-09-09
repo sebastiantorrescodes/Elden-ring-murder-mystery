@@ -14,6 +14,10 @@ const MIN_GAME_PLAYERS = 1;
 const MAX_GAME_PLAYERS = 6;
 const SPAWN_COUNT = 11;
 
+// temp
+const ENABLE_TWO_PLAYER_FAKE_MURDERER = true;
+const TWO_PLAYER_FAKE_MURDERER_ID = '__test_fake_murderer__';
+
 const MIN_ROUND_DURATION_MS = 60_000;
 const MAX_ROUND_DURATION_MS = 10 * 60_000;
 const WIN_RESULT_DELAY_MS = 3_000;
@@ -492,9 +496,8 @@ function evaluateRoundState(roomId) {
 
   if (!round || round.state !== 'ACTIVE' || round.roundEnded) return;
 
-  const murdererId = round.participantIds.find(
-    (id) => round.roleByPlayerId.get(id) === 'Murderer',
-  );
+  const murdererId = [...round.roleByPlayerId.entries()]
+    .find(([, role]) => role === 'Murderer')?.[0];
 
   if (!murdererId) {
     finishRound(roomId, 'Stalemate', 'missing murderer');
@@ -828,25 +831,51 @@ wss.on('connection', (ws) => {
         );
       });
 
-      roleByPlayerId.set(
-        roleOrder[0],
-        'Murderer',
-      );
+      const useFakeMurderer =
+        ENABLE_TWO_PLAYER_FAKE_MURDERER &&
+        participantIds.length === 2;
 
-      // The one-player configuration is retained only for local pipeline
-      // testing. Real rounds use MIN_GAME_PLAYERS=2 and always get a Sheriff.
-      if (roleOrder.length >= 2) {
+      if (useFakeMurderer) {
+        // The fake murderer exists only in server-side round state.
         roleByPlayerId.set(
-          roleOrder[1],
+          TWO_PLAYER_FAKE_MURDERER_ID,
+          'Murderer',
+        );
+
+        // Randomly choose which real player starts as Sheriff.
+        roleByPlayerId.set(
+          roleOrder[0],
           'Sheriff',
         );
-      }
 
-      for (let i = 2; i < roleOrder.length; i++) {
         roleByPlayerId.set(
-          roleOrder[i],
+          roleOrder[1],
           'Innocent',
         );
+
+        log(
+          `[test] fake murderer enabled; ` +
+          `sheriff="${roleOrder[0]}" innocent="${roleOrder[1]}"`,
+        );
+      } else {
+        roleByPlayerId.set(
+          roleOrder[0],
+          'Murderer',
+        );
+
+        if (roleOrder.length >= 2) {
+          roleByPlayerId.set(
+            roleOrder[1],
+            'Sheriff',
+          );
+        }
+
+        for (let i = 2; i < roleOrder.length; i++) {
+          roleByPlayerId.set(
+            roleOrder[i],
+            'Innocent',
+          );
+        }
       }
 
       const round = {
@@ -859,9 +888,12 @@ wss.on('connection', (ws) => {
         durationMs: msg.durationMs,
         commenced: false,
         roundEnded: false,
-        aliveByPlayerId: new Map(
-          participantIds.map((id) => [id, true]),
-        ),
+        aliveByPlayerId: new Map([
+          ...participantIds.map((id) => [id, true]),
+          ...(useFakeMurderer
+            ? [[TWO_PLAYER_FAKE_MURDERER_ID, true]]
+            : []),
+        ]),
         activeTimer: null,
         resultTimer: null,
         resetTimer: null,
