@@ -234,8 +234,8 @@ export class SignalingClient {
     this.send({ type: 'ready', ready });
   }
 
-  sendLobbyState(inRoundtable: boolean) {
-    this.send({ type: 'lobby-state', inRoundtable });
+  sendLobbyState(inRoundtable: boolean, gameConnected: boolean) {
+    this.send({ type: 'lobby-state', inRoundtable, gameConnected });
   }
 
   sendMicMuted(micMuted: boolean) {
