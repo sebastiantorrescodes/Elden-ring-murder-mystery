@@ -304,6 +304,7 @@ export default function App() {
   // in sync with what the rest of the room actually sees, same reasoning as
   // peerReadyRef for everyone else.
   const [myReady, setMyReady] = useState(false);
+  const [inRoundtable, setInRoundtable] = useState(false);
   // Shared round deadline, echoed back from the server for every client (see
   // onRoundTimer below) - null means no round is currently timed. A separate
   // `nowTick` state (updated by the effect below) is what actually drives the
@@ -330,6 +331,7 @@ export default function App() {
   const [peers, setPeers] = useState<PeerRow[]>([]);
 
   const signalingRef = useRef<SignalingClient | null>(null);
+  const inRoundtableRef = useRef(false);
   const meshRef = useRef<WebRtcMesh | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const isConnectingRef = useRef(false);
@@ -489,6 +491,8 @@ export default function App() {
     setHostId(null);
     setGameActive(false);
     setMyReady(false);
+    setInRoundtable(false);
+    inRoundtableRef.current = false;
     setRoundEndsAt(null);
     setStatus('disconnected');
     setIsConnected(false);
@@ -527,6 +531,7 @@ export default function App() {
         setHostId(msg.hostId);
         setStatus(`connected as "${name}" in room ${msg.room}`);
         setIsConnected(true);
+        signaling.sendLobbyState(inRoundtableRef.current);
         for (const peer of msg.peers) {
           meshRef.current?.registerExistingPeer(peer.id);
           peerDisplayNamesRef.current.set(peer.id, peer.displayName);
@@ -650,6 +655,11 @@ export default function App() {
   // Toggles this player's own ready-up state - anyone in the room can do this,
   // not just the host (unlike Start/End Game below).
   const handleReadyToggle = () => {
+    if (!inRoundtable) {
+      setStatus('you must be loaded in Roundtable Hold to ready up');
+      return;
+    }
+
     signalingRef.current?.sendReady(!myReady);
   };
 
@@ -767,6 +777,21 @@ export default function App() {
 
         const eventName = values.get('event');
         const roundId = values.get('round');
+
+        if (eventName === 'LobbyState') {
+          const nextInRoundtable =
+            values.get('inRoundtable') === '1';
+
+          inRoundtableRef.current = nextInRoundtable;
+          setInRoundtable(nextInRoundtable);
+          signalingRef.current?.sendLobbyState(nextInRoundtable);
+
+          if (!nextInRoundtable) {
+            setMyReady(false);
+          }
+
+          return;
+        }
 
         if (
           (eventName === 'PlayerLoaded' ||
@@ -972,8 +997,15 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleReadyToggle}
+                  disabled={!inRoundtable}
+                  title={
+                    inRoundtable
+                      ? undefined
+                      : 'Load into Roundtable Hold before readying up'
+                  }
                   className={cn(
                     'rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors',
+                    !inRoundtable && 'cursor-not-allowed opacity-40',
                     myReady
                       ? 'bg-green-500/20 text-green-400'
                       : 'bg-muted text-muted-foreground hover:bg-primary/10',
