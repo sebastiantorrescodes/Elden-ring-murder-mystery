@@ -36,20 +36,22 @@ export interface DllAreaReading {
   underground: number;
   mapX: number;
   mapY: number;
+  oriDeg: number;
 }
 
 const AREA_LINE_PATTERN =
-  /^area mapId=(-?\d+) underground=(-?\d+) mapX=([-\d.]+) mapY=([-\d.]+)$/;
+  /^area mapId=(-?\d+) underground=(-?\d+) mapX=([-\d.]+) mapY=([-\d.]+) oriDeg=([-\d.]+)$/;
 
 export function parseAreaLine(line: string): DllAreaReading | null {
   const match = AREA_LINE_PATTERN.exec(line.trim());
   if (!match) return null;
-  const [, mapId, underground, mapX, mapY] = match;
+  const [, mapId, underground, mapX, mapY, oriDeg] = match;
   return {
     mapId: Number(mapId),
     underground: Number(underground),
     mapX: Number(mapX),
     mapY: Number(mapY),
+    oriDeg: Number(oriDeg),
   };
 }
 

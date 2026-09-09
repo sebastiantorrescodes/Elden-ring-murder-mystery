@@ -190,7 +190,7 @@ export class SignalingClient {
     }
   }
 
-  // mapId/underground/yawCos/yawSin/blockId/mapX/mapY/hp are all optional: an older
+  // mapId/underground/yawCos/yawSin/blockId/mapX/mapY/hp/oriDeg are all optional: an older
   // client or the manual test controls that omit them are treated by the server as
   // "unknown" rather than being penalized (area/block: trust distance; facing: no
   // directional cue; hp: not muted). blockId is what the server actually gates
@@ -210,8 +210,9 @@ export class SignalingClient {
     mapX?: number,
     mapY?: number,
     hp?: number,
+    oriDeg?: number,
   ) {
-    this.send({ type: 'position', x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY, hp });
+    this.send({ type: 'position', x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY, hp, oriDeg });
   }
 
   sendSignal(to: PeerId, data: unknown) {
