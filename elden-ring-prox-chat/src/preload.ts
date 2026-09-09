@@ -28,6 +28,16 @@ contextBridge.exposeInMainWorld('dllBridge', {
       listener,
     );
 },
+  onConnectionState: (callback: (connected: boolean) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      connected: boolean,
+    ) => callback(connected);
+    ipcRenderer.on('mm-connection-state', listener);
+    return () => ipcRenderer.removeListener('mm-connection-state', listener);
+  },
+  getConnectionState: (): Promise<boolean> =>
+    ipcRenderer.invoke('mm-get-connection-state'),
   sendCommand: (commandName: string, params?: Record<string, string>): Promise<boolean> =>
     ipcRenderer.invoke('mm-send-command', commandName, params),
 });

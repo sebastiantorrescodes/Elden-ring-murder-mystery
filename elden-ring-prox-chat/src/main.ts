@@ -35,6 +35,10 @@ let mainWindow: BrowserWindow | null = null;
 // (from the VPS via signaling-client.ts, or manual testing) are written here.
 let mmSocket: net.Socket | null = null;
 
+function sendMmConnectionState(connected: boolean) {
+  mainWindow?.webContents.send('mm-connection-state', connected);
+}
+
 // Packaged builds have no attached console, so plain console.log here is invisible
 // to anyone not running from a dev terminal - mirror it into the renderer's visible
 // UI too, since that's the only thing a non-technical user (or a remote friend,
@@ -139,6 +143,7 @@ const startMmCommandServer = () => {
     // socket that silently swallows every write.
     socket.setKeepAlive(true, 5000);
     mmSocket = socket;
+    sendMmConnectionState(true);
 
     let mmBuffer = '';
 
@@ -162,6 +167,7 @@ const startMmCommandServer = () => {
       logStatus('[mm-server] MurderMystery.dll disconnected');
       if (mmSocket === socket) {
         mmSocket = null;
+        sendMmConnectionState(false);
       }
     });
 
@@ -228,6 +234,11 @@ app.on('ready', () => {
 // instead of going through this IPC handler.
 ipcMain.handle('mm-send-command', (_event, commandName: string, params?: Record<string, string>) =>
   sendMmCommand(commandName, params),
+);
+
+ipcMain.handle(
+  'mm-get-connection-state',
+  () => Boolean(mmSocket && !mmSocket.destroyed),
 );
 
 // Quit when all windows are closed, except on macOS. There, it's common

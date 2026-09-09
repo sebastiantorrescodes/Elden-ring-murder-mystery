@@ -305,6 +305,7 @@ export default function App() {
   // peerReadyRef for everyone else.
   const [myReady, setMyReady] = useState(false);
   const [inRoundtable, setInRoundtable] = useState(false);
+  const [gameConnected, setGameConnected] = useState(false);
   // Shared round deadline, echoed back from the server for every client (see
   // onRoundTimer below) - null means no round is currently timed. A separate
   // `nowTick` state (updated by the effect below) is what actually drives the
@@ -332,6 +333,7 @@ export default function App() {
 
   const signalingRef = useRef<SignalingClient | null>(null);
   const inRoundtableRef = useRef(false);
+  const gameConnectedRef = useRef(false);
   const meshRef = useRef<WebRtcMesh | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const isConnectingRef = useRef(false);
@@ -531,7 +533,10 @@ export default function App() {
         setHostId(msg.hostId);
         setStatus(`connected as "${name}" in room ${msg.room}`);
         setIsConnected(true);
-        signaling.sendLobbyState(inRoundtableRef.current);
+        signaling.sendLobbyState(
+          inRoundtableRef.current,
+          gameConnectedRef.current,
+        );
         for (const peer of msg.peers) {
           meshRef.current?.registerExistingPeer(peer.id);
           peerDisplayNamesRef.current.set(peer.id, peer.displayName);
@@ -655,8 +660,12 @@ export default function App() {
   // Toggles this player's own ready-up state - anyone in the room can do this,
   // not just the host (unlike Start/End Game below).
   const handleReadyToggle = () => {
-    if (!inRoundtable) {
-      setStatus('you must be loaded in Roundtable Hold to ready up');
+    if (!gameConnected || !inRoundtable) {
+      setStatus(
+        !gameConnected
+          ? 'launch Elden Ring with MurderMystery.dll before readying up'
+          : 'you must be loaded in Roundtable Hold to ready up',
+      );
       return;
     }
 
@@ -784,7 +793,10 @@ export default function App() {
 
           inRoundtableRef.current = nextInRoundtable;
           setInRoundtable(nextInRoundtable);
-          signalingRef.current?.sendLobbyState(nextInRoundtable);
+          signalingRef.current?.sendLobbyState(
+            nextInRoundtable,
+            gameConnectedRef.current,
+          );
 
           if (!nextInRoundtable) {
             setMyReady(false);
@@ -863,10 +875,31 @@ export default function App() {
       }
     });
 
+    const updateGameConnection = (connected: boolean) => {
+      gameConnectedRef.current = connected;
+      setGameConnected(connected);
+      signalingRef.current?.sendLobbyState(
+        inRoundtableRef.current,
+        connected,
+      );
+
+      if (!connected) {
+        setMyReady(false);
+      }
+    };
+
+    const unsubscribeConnectionState =
+      window.dllBridge.onConnectionState(updateGameConnection);
+
+    void window.dllBridge
+      .getConnectionState()
+      .then(updateGameConnection);
+
     return () => {
       unsubscribeStatus();
       unsubscribeReading();
       unsubscribeMmEvent();
+      unsubscribeConnectionState();
     };
   }, []);
 
@@ -997,15 +1030,18 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleReadyToggle}
-                  disabled={!inRoundtable}
+                  disabled={!gameConnected || !inRoundtable}
                   title={
-                    inRoundtable
-                      ? undefined
-                      : 'Load into Roundtable Hold before readying up'
+                    !gameConnected
+                      ? 'Launch Elden Ring with MurderMystery.dll before readying up'
+                      : inRoundtable
+                        ? undefined
+                        : 'Load into Roundtable Hold before readying up'
                   }
                   className={cn(
                     'rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors',
-                    !inRoundtable && 'cursor-not-allowed opacity-40',
+                    (!gameConnected || !inRoundtable) &&
+                      'cursor-not-allowed opacity-40',
                     myReady
                       ? 'bg-green-500/20 text-green-400'
                       : 'bg-muted text-muted-foreground hover:bg-primary/10',
