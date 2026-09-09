@@ -1038,10 +1038,17 @@ wss.on('connection', (ws) => {
             // The server owns the role transition: remove the guilty Sheriff's
             // loadout/identity, then make their kit available to Innocents.
             round.roleByPlayerId.set(sheriffId, 'Innocent');
-            sendCommand(room, sheriffId, 'SetRole', {
-              round: round.id,
-              role: 'Innocent',
-            });
+
+            const demotionSent =
+              sendCommand(room, sheriffId, 'SetRole', {
+                round: round.id,
+                role: 'Innocent',
+              });
+
+            log(
+              `[sheriff] wrong-kill demotion target="${sheriffId}" ` +
+              `sent=${demotionSent} round="${round.id}"`,
+            );
 
             spawnSheriffDrop(
               room,
