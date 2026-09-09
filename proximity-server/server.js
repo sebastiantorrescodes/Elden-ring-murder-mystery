@@ -24,6 +24,7 @@ const HUB_RETURN_GRACE_MS = 5_000;
 
 const ITEM_SPAWN_INTERVAL_MS = 31_313;
 const ITEM_SPAWN_POINT_COUNT = 10;
+const SHERIFF_DROP_POINT_COUNT = 13;
 
 // Prefixes every server log with a sortable UTC timestamp so lines can be
 // correlated with client-side logs / crash reports without guessing at
@@ -282,6 +283,13 @@ function finishRound(roomId, result, reason) {
 
   round.roundEnded = true;
   round.state = 'ENDING';
+  round.sheriffDropIndex = null;
+
+  // Remove the kit as soon as the round result is decided, rather than leaving
+  // it interactable during the result-banner delay.
+  for (const id of round.participantIds) {
+    sendCommand(room, id, 'SheriffDropClear', { round: round.id });
+  }
 
   if (round.activeTimer) {
     clearTimeout(round.activeTimer);
@@ -806,6 +814,7 @@ wss.on('connection', (ws) => {
         endingTimer: null,
         itemSpawnTimer: null,
         occupiedItemPoints: new Set(),
+        sheriffDropIndex: null,
       };
 
       roomRounds.set(
@@ -842,7 +851,8 @@ wss.on('connection', (ws) => {
       if (
         (msg.name !== 'PlayerLoaded' &&
           msg.name !== 'PlayerDied' &&
-          msg.name !== 'ItemPickedUp') ||
+          msg.name !== 'ItemPickedUp' &&
+          msg.name !== 'SheriffKitPickedUp') ||
         !isValidIdString(msg.roundId)
       ) {
         return;
@@ -886,12 +896,61 @@ wss.on('connection', (ws) => {
         return;
       }
 
+      if (msg.name === 'SheriffKitPickedUp') {
+        if (
+          round.state !== 'ACTIVE' ||
+          round.roundEnded ||
+          round.sheriffDropIndex === null ||
+          round.aliveByPlayerId.get(peerId) !== true ||
+          round.roleByPlayerId.get(peerId) !== 'Innocent'
+        ) {
+          return;
+        }
+
+        // First valid claim wins. Clear this before sending anything so two
+        // near-simultaneous pickup messages cannot create two Sheriffs.
+        round.sheriffDropIndex = null;
+        round.roleByPlayerId.set(peerId, 'Sheriff');
+
+        for (const id of round.participantIds) {
+          sendCommand(room, id, 'SheriffDropClear', { round: round.id });
+        }
+
+        sendCommand(room, peerId, 'SetRole', {
+          round: round.id,
+          role: 'Sheriff',
+        });
+
+        log(`[sheriff] kit claimed by "${peerId}" round="${round.id}"`);
+        return;
+      }
+
       if (msg.name === 'PlayerDied') {
         if (round.state !== 'ACTIVE' || round.roundEnded) return;
         if (round.aliveByPlayerId.get(peerId) === false) return;
 
         round.aliveByPlayerId.set(peerId, false);
         log(`[game-event] PlayerDied "${peerId}" round="${round.id}"`);
+
+        if (round.roleByPlayerId.get(peerId) === 'Sheriff') {
+          const spawnIndex =
+            1 + crypto.randomInt(SHERIFF_DROP_POINT_COUNT);
+
+          round.sheriffDropIndex = spawnIndex;
+
+          for (const id of round.participantIds) {
+            sendCommand(room, id, 'SheriffDrop', {
+              round: round.id,
+              spawn: String(spawnIndex),
+            });
+          }
+
+          log(
+            `[sheriff] died="${peerId}" drop=${spawnIndex} ` +
+            `round="${round.id}"`,
+          );
+        }
+
         evaluateRoundState(roomId);
         return;
       }

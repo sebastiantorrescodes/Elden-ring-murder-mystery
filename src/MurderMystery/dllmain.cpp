@@ -2000,6 +2000,42 @@ namespace MM
         return RequestItemSpawn(spawnIndex);
     }
 
+    constexpr int SHERIFF_DROP_POINT_COUNT = 13;
+
+    constexpr uint32_t SHERIFF_DROP_FLAGS[SHERIFF_DROP_POINT_COUNT] = {
+        16009890u, 16009891u, 16009892u, 16009893u, 16009894u,
+        16009895u, 16009896u, 16009897u, 16009898u, 16009899u,
+        16009920u, 16009921u, 16009922u,
+    };
+
+    bool ClearSheriffDropFlags()
+    {
+        bool success = true;
+
+        for (int index = 0; index < SHERIFF_DROP_POINT_COUNT; ++index)
+        {
+            success = SetEventFlag(
+                SHERIFF_DROP_FLAGS[index],
+                false) && success;
+        }
+
+        return success;
+    }
+
+    bool RequestSheriffDrop(int spawnIndex)
+    {
+        if (spawnIndex < 1 || spawnIndex > SHERIFF_DROP_POINT_COUNT)
+        {
+            return false;
+        }
+
+        ClearSheriffDropFlags();
+
+        return SetEventFlag(
+            SHERIFF_DROP_FLAGS[spawnIndex - 1],
+            true);
+    }
+
     // --------------------------------------------------------
     // Weapon operations
     // --------------------------------------------------------
@@ -4269,6 +4305,7 @@ namespace MM
             g_roundActive = false;
             g_playerDeathReported = false;
             g_volcanoItemCleanupRequested = false;
+            ClearSheriffDropFlags();
 
             for (bool& wasActive :
                 g_itemPointWasActive)
@@ -4359,6 +4396,48 @@ namespace MM
             Log(
                 "[ROLE] Server role applied: " +
                 roleParam->second);
+        }
+        else if (commandName == "SheriffDrop")
+        {
+            const auto roundParam = params.find("round");
+            const auto spawnParam = params.find("spawn");
+
+            if (roundParam == params.end() ||
+                roundParam->second != g_activeRoundId ||
+                spawnParam == params.end())
+            {
+                Log("[SHERIFF] Ignoring invalid/stale SheriffDrop.");
+                return;
+            }
+
+            int spawnIndex = 0;
+
+            try
+            {
+                spawnIndex = std::stoi(spawnParam->second);
+            }
+            catch (...)
+            {
+                Log("[SHERIFF] Invalid SheriffDrop spawn index.");
+                return;
+            }
+
+            if (RequestSheriffDrop(spawnIndex))
+            {
+                Log("[SHERIFF] Drop activated at point " +
+                    std::to_string(spawnIndex) + ".");
+            }
+        }
+        else if (commandName == "SheriffDropClear")
+        {
+            const auto roundParam = params.find("round");
+
+            if (roundParam != params.end() &&
+                roundParam->second == g_activeRoundId)
+            {
+                ClearSheriffDropFlags();
+                Log("[SHERIFF] Drop cleared.");
+            }
         }
         else if (commandName == "Commence")
         {
@@ -4542,6 +4621,7 @@ namespace MM
             g_playerDeathReported = false;
             g_waitingForVolcanoLoad = false;
             g_volcanoLoadReported = false;
+            ClearSheriffDropFlags();
 
             const uintptr_t player =
                 GetLocalPlayerIns();
@@ -5506,22 +5586,25 @@ namespace MM
                     {
                         Log(
                             "[SHERIFF] Innocent claimed "
-                            "dropped Sheriff kit.");
+                            "dropped Sheriff kit; requesting server promotion.");
 
-                        SetLocalRole(
-                            Role::Sheriff);
+                        mmTcpClient.sendLine(
+                            "event=SheriffKitPickedUp round=" +
+                            g_activeRoundId);
                     }
                 }
             }
 
             if (GetAsyncKeyState(VK_F1) & 1)
             {
-                SetEventFlag(
-                    16009984,
-                    true);
+                const int spawnIndex =
+                    1 + (rand() % SHERIFF_DROP_POINT_COUNT);
+
+                RequestSheriffDrop(spawnIndex);
 
                 Log(
-                    "[TEST] F1 -> Sheriff kit pickup spawned.");
+                    "[TEST] F1 -> Sheriff kit pickup spawned at point " +
+                    std::to_string(spawnIndex) + ".");
             }
 
             if (GetAsyncKeyState(VK_F2) & 1)
@@ -5912,12 +5995,8 @@ namespace MM
                         if (currentRole == Role::Sheriff)
                         {
                             Log(
-                                "[SHERIFF] Sheriff died -> "
-                                "requesting dropped kit.");
-
-                            SetEventFlag(
-                                16009980,
-                                true);
+                                "[SHERIFF] Sheriff died; server will select "
+                                "and broadcast the dropped-kit point.");
                         }
 
                     }

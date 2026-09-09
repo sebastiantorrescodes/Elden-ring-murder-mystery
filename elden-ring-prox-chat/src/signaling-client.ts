@@ -251,7 +251,8 @@ export class SignalingClient {
     name:
       | 'PlayerLoaded'
       | 'PlayerDied'
-      | 'ItemPickedUp',
+      | 'ItemPickedUp'
+      | 'SheriffKitPickedUp',
     roundId: string,
     index?: number,
   ) {
