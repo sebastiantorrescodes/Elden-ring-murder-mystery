@@ -93,3 +93,23 @@ export function parseBlockLine(line: string): DllBlockReading | null {
     blockId: Number(blockId),
   };
 }
+
+// This client's own current map-relative elevation (see the MapRelativeCoords
+// comment in WorldChrMan.h) - read off a different offset than the slot=... line's
+// raw ChrIns y, and (in the open world) shouldn't reset when crossing a local
+// map-tile boundary the way raw y does. Only y is on the wire - x/z/rad/map aren't
+// consumed downstream yet.
+export interface DllMapRelativeReading {
+  y: number;
+}
+
+const MAP_RELATIVE_LINE_PATTERN = /^mapRelative y=([-\d.]+)$/;
+
+export function parseMapRelativeLine(line: string): DllMapRelativeReading | null {
+  const match = MAP_RELATIVE_LINE_PATTERN.exec(line.trim());
+  if (!match) return null;
+  const [, y] = match;
+  return {
+    y: Number(y),
+  };
+}

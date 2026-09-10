@@ -151,6 +151,53 @@ void WorldChrMan::debugSlot(int playerSlot) {
                << " hp=" << coords.hp << "/" << coords.maxHp << std::endl;
 }
 
+// See the MapRelativeCoords comment in WorldChrMan.h - same per-slot base pointer as
+// tryReadSlot, but stops one hop earlier (skips the +0x190/+0x68 detour into ChrIns's
+// coord block) and reads a different, parallel struct instead. SEH-wrapped for the
+// same reason as tryReadSlot: an out-of-bounds/empty slot should return false, not
+// crash.
+bool WorldChrMan::tryReadMapRelative(int playerSlot, MapRelativeCoords& out) {
+    __try {
+        if (!WorldChrManIns) {
+            return false;
+        }
+        uintptr_t base = *(uintptr_t*)WorldChrManIns;
+        base = *(uintptr_t*)(base + 0x10EF8);
+        base = base + (0x10 * playerSlot);
+        base = *(uintptr_t*)base;
+        if (!base) {
+            return false;
+        }
+        out.x = *(float*)(base + 0x6C0);
+        out.y = *(float*)(base + 0x6C4);
+        out.z = *(float*)(base + 0x6C8);
+        out.rad = *(float*)(base + 0x6CC);
+        out.map = *(uint32_t*)(base + 0x6D0);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+void WorldChrMan::debugMapRelative(int playerSlot) {
+    MapRelativeCoords mrc{};
+    if (!tryReadMapRelative(playerSlot, mrc)) {
+        std::cout << "Slot " << playerSlot << " mapRelative: empty or read crashed, likely out of bounds" << std::endl;
+        return;
+    }
+    // Packed as area/gridX/gridZ/variant, matching this repo's own m<area>_<gridX>_
+    // <gridZ>_<variant> map file naming (e.g. m60_42_36_00 -> area 0x3C, gridX 0x42,
+    // gridZ 0x24... printed in hex here since that's the base the file names use).
+    uint8_t areaId = (mrc.map >> 24) & 0xFF;
+    uint8_t gridXNo = (mrc.map >> 16) & 0xFF;
+    uint8_t gridZNo = (mrc.map >> 8) & 0xFF;
+    uint8_t variant = mrc.map & 0xFF;
+    std::cout << "Slot " << playerSlot << " mapRelative: x=" << mrc.x << " y=" << mrc.y << " z=" << mrc.z
+               << " rad=" << mrc.rad << " map=0x" << std::hex << mrc.map
+               << " (areaId=0x" << (int)areaId << " gridXNo=0x" << (int)gridXNo
+               << " gridZNo=0x" << (int)gridZNo << " variant=0x" << (int)variant << ")" << std::dec << std::endl;
+}
+
 // Used to gate on underground being in [0, 8] here too (EROverlay only ever checks
 // "underground & 1", so it should only ever be a small flag) - dropped after live
 // testing showed underground reading obviously-garbage values (e.g. -697717248)

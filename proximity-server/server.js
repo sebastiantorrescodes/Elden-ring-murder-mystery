@@ -74,7 +74,7 @@ function resolveDisplayName(value) {
   return 'Player';
 }
 
-// roomCode -> Map<peerId, { ws, displayName, x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY, oriDeg }>
+// roomCode -> Map<peerId, { ws, displayName, x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY, oriDeg, mapRelY }>
 const rooms = new Map();
 // roomCode -> peerId of whoever hosted it. If the host disconnects and the room
 // isn't empty, the close handler below promotes the longest-remaining peer rather
@@ -132,6 +132,7 @@ function makeInitialPeerState(ws, displayName) {
     mapY: undefined,
     hp: undefined,
     oriDeg: undefined,
+    mapRelY: undefined,
   };
 }
 
@@ -688,6 +689,11 @@ wss.on('connection', (ws) => {
       // stored but not yet consumed by computeGain/computeRelativeOffset, which
       // still derive the listener's facing from yawCos/yawSin instead.
       peer.oriDeg = isFiniteNumber(msg.oriDeg) ? msg.oriDeg : undefined;
+      // Map-relative elevation (see the MapRelativeCoords comment in WorldChrMan.h) -
+      // unlike raw y above, this shouldn't reset when crossing a local map-tile
+      // boundary in the open world. computeGain's mapDistance uses this instead of
+      // raw y for the elevation term now - see hasMapPosition in proximity.js.
+      peer.mapRelY = isFiniteNumber(msg.mapRelY) ? msg.mapRelY : undefined;
       broadcastVolumes(room);
       return;
     }

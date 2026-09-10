@@ -26,10 +26,12 @@ import {
   parseAreaLine,
   parseCameraLine,
   parseBlockLine,
+  parseMapRelativeLine,
   LOCAL_PLAYER_SLOT,
   type DllAreaReading,
   type DllCameraReading,
   type DllBlockReading,
+  type DllMapRelativeReading,
 } from './dll-protocol';
 import { SignalingClient } from './signaling-client';
 import { WebRtcMesh, type SignalPayload } from './webrtc-mesh';
@@ -348,6 +350,7 @@ export default function App() {
   const lastAreaRef = useRef<DllAreaReading | null>(null);
   const lastCameraRef = useRef<DllCameraReading | null>(null);
   const lastBlockRef = useRef<DllBlockReading | null>(null);
+  const lastMapRelativeRef = useRef<DllMapRelativeReading | null>(null);
 
   const localMeterRef = useRef<HTMLDivElement | null>(null);
   const peerMeterRefs = useRef(new Map<string, HTMLDivElement>());
@@ -865,6 +868,12 @@ export default function App() {
         return;
       }
 
+      const mapRelative = parseMapRelativeLine(line);
+      if (mapRelative) {
+        lastMapRelativeRef.current = mapRelative;
+        return;
+      }
+
       const reading = parseDllLine(line);
       if (reading && reading.slot === LOCAL_PLAYER_SLOT && signalingRef.current) {
         signalingRef.current.sendPosition(
@@ -880,6 +889,7 @@ export default function App() {
           lastAreaRef.current?.mapY,
           reading.hp,
           lastAreaRef.current?.oriDeg,
+          lastMapRelativeRef.current?.y,
         );
       }
     });

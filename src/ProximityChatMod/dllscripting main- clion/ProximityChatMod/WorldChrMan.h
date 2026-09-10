@@ -36,6 +36,26 @@ struct Camera {
     int32_t dummy1;
 };
 
+// Same per-player base pointer as PlayerCoords (WorldChrMan+0x10EF8 -> per-slot
+// entry), but read at a different offset instead of detouring through +0x190/+0x68
+// into ChrIns's coord block - a second, parallel struct on the same object. Ported
+// from tremwil (minusone12)'s "map-relative teleport" Cheat Engine script (coords
+// credited to Pav there). x/z are relative to a 256-unit grid tile named by `map`
+// (area/gridX/gridZ packed into its bytes, matching this repo's own m<area>_<gridX>_
+// <gridZ>_<variant> map file naming) - see that script's getAbsoluteCoords for the
+// +256*gridXNo/+256*gridZNo rebase needed to compare x/z across tiles. y is NOT
+// tile-relative for the open world (area 0x3C/0x3D) per that same function - unlike
+// PlayerCoords.y, it should need no rebase to stay comparable across a tile
+// boundary. Unverified in this codebase until checked live against a known tile
+// crossing (same bar as Camera's yawCos/yawSin axis mapping).
+struct MapRelativeCoords {
+    float x;
+    float y;
+    float z;
+    float rad;
+    uint32_t map;
+};
+
 class Address {
 protected:
     void* address;
@@ -60,6 +80,12 @@ public:
     // Guarded raw pointer walk (SEH, not PointerChain) so an out-of-bounds/empty
     // slot returns false instead of crashing. Shared by debugSlot and the TCP poll loop.
     static bool tryReadSlot(int playerSlot, PlayerCoords& out);
+
+    // See the MapRelativeCoords comment above - per-slot like PlayerCoords (works for
+    // any probed slot, not just the local player), just a different offset off the
+    // same base pointer. Same SEH-guarded-slot-walk reasoning as tryReadSlot/debugSlot.
+    static bool tryReadMapRelative(int playerSlot, MapRelativeCoords& out);
+    static void debugMapRelative(int playerSlot);
 
     // Local client's own current map/area (see Location comment above), resolved via
     // CsMenuManImp - a separate global pointer chain from WorldChrMan/GameMan.
