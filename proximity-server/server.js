@@ -229,17 +229,13 @@ function resetRoomToWaiting(roomId, expectedRoundId) {
   // Living players still in Volcano Manor need a warp.
   // Dead players are already in Roundtable.
   for (const id of round.participantIds) {
-    const shouldReturnToHub =
-      round.aliveByPlayerId.get(id) !== false;
-
     sendCommand(
       room,
       id,
       'EndGame',
       {
         round: round.id,
-        returnToHub:
-          shouldReturnToHub ? '1' : '0',
+        returnToHub: '1',
       },
     );
   }
