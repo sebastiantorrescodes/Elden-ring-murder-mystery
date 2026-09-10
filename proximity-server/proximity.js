@@ -77,9 +77,12 @@ function computeGain(self, other) {
 // direction when distance is ~0).
 //
 // NOTE: which world axis "yaw=0" faces was a first attempt ported from the DLL's
-// Camera struct. Left/right handedness has since been confirmed in-game and fixed
-// (see the rightX/rightZ comment below); front/back has not been separately
-// confirmed yet - if that ever comes out swapped too, negate forwardComponent below.
+// Camera struct, never independently confirmed in-game. An earlier version of this
+// function flipped rightX/rightZ's sign after an in-game check reported left/right
+// backwards with the untouched rotation - that flip has since been reverted back to
+// the plain 90°-rotation-of-forward math below, per explicit request, without
+// re-testing. If left/right (or front/back, via forwardComponent) ever comes out
+// backwards again, that's the first place to look.
 //
 // dx/dz now come from mapRelX/mapRelZ (see the MapRelativeCoords comment in
 // WorldChrMan.h) rather than raw x/z: raw x/z was observed resetting discontinuously
@@ -122,11 +125,9 @@ function computeRelativeOffset(self, other) {
 
   const forwardX = self.yawSin;
   const forwardZ = self.yawCos;
-  // Confirmed in-game left/right came out swapped with the other rotation direction
-  // (rightX = forwardZ, rightZ = -forwardX) - flipped here. Front/back weren't
-  // reported as swapped, so forwardComponent below is untouched.
-  const rightX = -forwardZ;
-  const rightZ = forwardX;
+  // Plain 90° rotation of the forward vector to get "right" - see the NOTE above.
+  const rightX = forwardZ;
+  const rightZ = -forwardX;
 
   const forwardComponent = dx * forwardX + dz * forwardZ;
   const rightComponent = dx * rightX + dz * rightZ;
