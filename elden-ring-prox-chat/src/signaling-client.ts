@@ -276,10 +276,11 @@ export class SignalingClient {
   // Reports a local DLL event to the round coordinator.
   sendGameEvent(
     name:
-      | 'PlayerLoaded'
-      | 'PlayerDied'
-      | 'ItemPickedUp'
-      | 'SheriffKitPickedUp',
+    | 'PlayerLoaded'
+    | 'PlayerDied'
+    | 'ItemPickedUp'
+    | 'SheriffKitPickedUp'
+    | 'SheriffHit',
     roundId: string,
     index?: number,
     cause?: 'Sheriff' | 'Other',

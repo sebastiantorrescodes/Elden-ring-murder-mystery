@@ -915,6 +915,7 @@ wss.on('connection', (ws) => {
         itemSpawnTimer: null,
         occupiedItemPoints: new Set(),
         sheriffDropIndex: null,
+        lastSheriffHit: null,
       };
 
       roomRounds.set(
@@ -952,7 +953,8 @@ wss.on('connection', (ws) => {
         (msg.name !== 'PlayerLoaded' &&
           msg.name !== 'PlayerDied' &&
           msg.name !== 'ItemPickedUp' &&
-          msg.name !== 'SheriffKitPickedUp') ||
+          msg.name !== 'SheriffKitPickedUp' &&
+          msg.name !== 'SheriffHit') ||
         !isValidIdString(msg.roundId)
       ) {
         return;
@@ -1025,56 +1027,142 @@ wss.on('connection', (ws) => {
         return;
       }
 
-      if (msg.name === 'PlayerDied') {
-        if (round.state !== 'ACTIVE' || round.roundEnded) return;
-        if (round.aliveByPlayerId.get(peerId) === false) return;
+      if (msg.name === 'SheriffHit') {
         if (
-          msg.cause !== undefined &&
-          msg.cause !== 'Sheriff' &&
-          msg.cause !== 'Other'
-        ) return;
+          round.state !== 'ACTIVE' ||
+          round.roundEnded ||
+          round.roleByPlayerId.get(peerId) !== 'Sheriff' ||
+          round.aliveByPlayerId.get(peerId) !== true
+        ) {
+          return;
+        }
 
-        const victimRole = round.roleByPlayerId.get(peerId);
-        round.aliveByPlayerId.set(peerId, false);
+        round.lastSheriffHit = {
+          sheriffId: peerId,
+          receivedAt: Date.now(),
+        };
+
         log(
-          `[game-event] PlayerDied "${peerId}" cause=${msg.cause || 'Other'} ` +
+          `[sheriff] confirmed hit from "${peerId}" ` +
           `round="${round.id}"`,
         );
 
-        if (victimRole === 'Innocent' && msg.cause === 'Sheriff') {
-          const sheriffId = round.participantIds.find(
-            (id) =>
-              round.roleByPlayerId.get(id) === 'Sheriff' &&
-              round.aliveByPlayerId.get(id) === true,
+        return;
+      }
+
+      if (msg.name === 'PlayerDied') {
+        if (round.state !== 'ACTIVE' || round.roundEnded) return;
+        if (round.aliveByPlayerId.get(peerId) === false) return;
+
+        const victimId = peerId;
+        const victimRole =
+          round.roleByPlayerId.get(victimId);
+
+        round.aliveByPlayerId.set(victimId, false);
+
+        log(
+          `[game-event] PlayerDied "${victimId}" ` +
+          `role=${victimRole || 'Unknown'} ` +
+          `round="${round.id}"`,
+        );
+
+        if (victimRole === 'Sheriff') {
+          spawnSheriffDrop(
+            room,
+            round,
+            `Sheriff ${victimId} died`,
           );
 
-          if (sheriffId) {
-            // The server owns the role transition: remove the guilty Sheriff's
-            // loadout/identity, then make their kit available to Innocents.
-            round.roleByPlayerId.set(sheriffId, 'Innocent');
-
-            const demotionSent =
-              sendCommand(room, sheriffId, 'SetRole', {
-                round: round.id,
-                role: 'Innocent',
-              });
-
-            log(
-              `[sheriff] wrong-kill demotion target="${sheriffId}" ` +
-              `sent=${demotionSent} round="${round.id}"`,
-            );
-
-            spawnSheriffDrop(
-              room,
-              round,
-              `Sheriff ${sheriffId} killed Innocent ${peerId}`,
-            );
-          }
-        } else if (victimRole === 'Sheriff') {
-          spawnSheriffDrop(room, round, `Sheriff ${peerId} died`);
+          evaluateRoundState(roomId);
+          return;
         }
 
-        evaluateRoundState(roomId);
+        if (victimRole !== 'Innocent') {
+          evaluateRoundState(roomId);
+          return;
+        }
+
+        // SheriffHit and PlayerDied originate from different clients.
+        // Briefly delay attribution so either network message can arrive first.
+        const expectedRoundId = round.id;
+
+        setTimeout(() => {
+          const currentRoom =
+            rooms.get(roomId);
+
+          const currentRound =
+            roomRounds.get(roomId);
+
+          if (
+            !currentRoom ||
+            !currentRound ||
+            currentRound.id !== expectedRoundId ||
+            currentRound.state !== 'ACTIVE' ||
+            currentRound.roundEnded
+          ) {
+            return;
+          }
+
+          const hit =
+            currentRound.lastSheriffHit;
+
+          const sheriffAttributed =
+            hit !== null &&
+            Date.now() - hit.receivedAt <= 2000;
+
+          if (sheriffAttributed) {
+            const sheriffId =
+              hit.sheriffId;
+
+            currentRound.lastSheriffHit = null;
+
+            if (
+              currentRound.roleByPlayerId.get(sheriffId) ===
+                'Sheriff' &&
+              currentRound.aliveByPlayerId.get(sheriffId) ===
+                true
+            ) {
+              currentRound.roleByPlayerId.set(
+                sheriffId,
+                'Innocent',
+              );
+
+              const demotionSent =
+                sendCommand(
+                  currentRoom,
+                  sheriffId,
+                  'SetRole',
+                  {
+                    round: currentRound.id,
+                    role: 'Innocent',
+                  },
+                );
+
+              log(
+                `[sheriff] wrong-kill demotion ` +
+                `target="${sheriffId}" ` +
+                `victim="${victimId}" ` +
+                `sent=${demotionSent} ` +
+                `round="${currentRound.id}"`,
+              );
+
+              spawnSheriffDrop(
+                currentRoom,
+                currentRound,
+                `Sheriff ${sheriffId} killed ` +
+                `Innocent ${victimId}`,
+              );
+            }
+          } else {
+            log(
+              `[sheriff] Innocent "${victimId}" died ` +
+              `without a recent confirmed Sheriff hit`,
+            );
+          }
+
+          evaluateRoundState(roomId);
+        }, 500);
+
         return;
       }
 

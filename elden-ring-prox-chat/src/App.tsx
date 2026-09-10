@@ -812,7 +812,8 @@ export default function App() {
           (eventName === 'PlayerLoaded' ||
             eventName === 'PlayerDied' ||
             eventName === 'ItemPickedUp' ||
-            eventName === 'SheriffKitPickedUp') &&
+            eventName === 'SheriffKitPickedUp' ||
+            eventName === 'SheriffHit') &&
           roundId &&
           signalingRef.current
         ) {
