@@ -165,14 +165,10 @@ DWORD WINAPI MainThread(LPVOID lpParam)
             // per-slot capable. Unlike the slot=... line's raw PlayerCoords, x/y/z
             // here shouldn't reset when crossing a local map-tile boundary in the
             // open world (tryReadMapRelative applies the grid rebase internally) -
-            // proximity.js's mapDistance uses y for elevation, and
-            // computeRelativeOffset uses x/z instead of raw x/z for panning
-            // direction now. rad is this client's own character facing (not the
-            // camera's - contrast with the "camera yawCos/yawSin" line above), and
-            // is what computeRelativeOffset now uses to build its forward/right
-            // basis instead of yawCos/yawSin, since a third-person camera can be
-            // spun to face a completely different direction than the character
-            // actually does. map isn't consumed downstream yet.
+            // proximity.js's mapDistance uses y for elevation. x/z/rad/map aren't
+            // currently consumed downstream (directional/panning audio, which used
+            // to read x/z/rad here, was removed) - still sent in case direction is
+            // ever revisited.
             MapRelativeCoords mapRel{};
             if (WorldChrMan::tryReadMapRelative(kLocalPlayerSlot, mapRel)) {
                 std::ostringstream mapRelLine;

@@ -64,8 +64,7 @@ ws.on('message', (raw) => {
   } else if (msg.type === 'peer-left') {
     console.log(`[${PLAYER_ID}] peer left: ${msg.id}`);
   } else if (msg.type === 'volumes') {
-    // volumes[id] is now { gain, relX, relY, relZ } - this mock client doesn't send
-    // yawCos/yawSin, so relX/Y/Z will always be the server's neutral fallback direction.
+    // volumes[id] is { gain } - no directional component (removed).
     const entries = Object.entries(msg.volumes).map(([id, v]) => `${id}=${v.gain.toFixed(2)}`);
     console.log(`[${PLAYER_ID}] volumes: ${entries.join(', ') || '(none)'}`);
   }

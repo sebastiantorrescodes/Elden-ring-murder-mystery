@@ -53,14 +53,9 @@ interface RoundStateMessage {
   state: 'LOADING' | 'STARTING' | 'ACTIVE' | 'ENDING' | 'WAITING';
   result?: 'InnocentWin' | 'MurdererWin' | 'Stalemate';
 }
-// relX/Y/Z are the peer's position already rotated into the listener's own facing
-// frame server-side (see proximity.js's computeRelativeOffset) - feed straight into
-// a PannerNode's position, no further rotation needed on this end.
+// No directional component - see server.js's broadcastVolumes.
 export interface PeerVolume {
   gain: number;
-  relX: number;
-  relY: number;
-  relZ: number;
 }
 interface VolumesMessage {
   type: 'volumes';
@@ -198,14 +193,12 @@ export class SignalingClient {
   // mapId/underground/mapX/mapY are kept for other potential uses but don't drive
   // that decision (yet, for mapX/mapY - see the Location comment in
   // WorldChrMan.h). hp === 0 mutes this peer's mic for everyone, regardless of
-  // distance - see proximity.js's computeGain. mapRelY/mapRelX/mapRelZ (see the
-  // MapRelativeCoords comment in WorldChrMan.h) are what computeGain's mapDistance
-  // (y) and computeRelativeOffset's panning direction (x/z) use instead of raw
-  // y/x/z, since they shouldn't reset when crossing a local map-tile boundary the
-  // way raw x/y/z does. mapRelRad is this client's own character facing (not the
-  // camera's, unlike yawCos/yawSin) - computeRelativeOffset now uses it instead of
-  // yawCos/yawSin for the forward/right basis, since a third-person camera can be
-  // spun to face a different direction than the character actually does.
+  // distance - see proximity.js's computeGain. mapRelY (see the MapRelativeCoords
+  // comment in WorldChrMan.h) is what computeGain's mapDistance uses for elevation
+  // instead of raw y, since it shouldn't reset when crossing a local map-tile
+  // boundary the way raw y does. mapRelX/mapRelZ/mapRelRad aren't currently
+  // consumed server-side (directional/panning audio, which used to use them, was
+  // removed) - still sent in case direction is ever revisited.
   sendPosition(
     x: number,
     y: number,

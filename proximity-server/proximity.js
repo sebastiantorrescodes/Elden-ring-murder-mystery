@@ -68,85 +68,10 @@ function computeGain(self, other) {
   return distanceGain(mapDistance(self, other));
 }
 
-// Rotates a peer's position into "relative to the listener, in the listener's own
-// facing frame" coordinates, for feeding a Web Audio PannerNode directly (rolloff
-// disabled on that node - direction only, volume stays computeGain's job). Falls
-// back to a neutral straight-ahead direction whenever there isn't enough information
-// to compute a real one, rather than a stale or undefined direction: missing facing
-// data, missing map-relative position, or the two positions coinciding (no defined
-// direction when distance is ~0).
-//
-// NOTE: which world axis "angle=0" faces was a first attempt, never independently
-// confirmed in-game. An earlier version of this function flipped rightX/rightZ's
-// sign after an in-game check reported left/right backwards with the untouched
-// rotation - that flip has since been reverted back to the plain
-// 90°-rotation-of-forward math below, per explicit request, without re-testing. If
-// left/right (or front/back, via forwardComponent) ever comes out backwards again,
-// that's the first place to look.
-//
-// dx/dz come from mapRelX/mapRelZ (see the MapRelativeCoords comment in
-// WorldChrMan.h) rather than raw x/z: raw x/z was observed resetting discontinuously
-// when crossing a local map-tile boundary, which scrambled rightComponent/
-// forwardComponent's sign out of nowhere (perceived as left/right suddenly
-// swapping) even with no real facing/position change. mapRelX/mapRelZ come from the
-// same underlying per-player struct as raw x/y/z (same WorldChrMan base pointer,
-// just a different offset - see tryReadMapRelative), not from distance3D's mapX/mapY
-// (a different, unrelated CsMenuManImp-sourced coordinate space).
-//
-// forwardX/forwardZ are derived from mapRelRad (this peer's own character facing)
-// instead of the Camera struct's yawCos/yawSin (the camera's facing): in a
-// third-person game the camera can be orbited to face a completely different
-// direction than the character actually does (e.g. spun around to look at your own
-// character's face while still walking forward), which would otherwise make the
-// whole soundstage rotate with the camera instead of staying tied to where players
-// actually are relative to each other. mapRelRad comes from the same struct as
-// mapRelX/mapRelZ, so it projects against them in the same coordinate frame. dy is
-// still raw y (a separate, smaller concern - see mapDistance for why elevation
-// specifically needed mapRelY).
-const NEUTRAL_OFFSET = { x: 0, y: 0, z: -1 };
-const MIN_HORIZONTAL_DISTANCE = 0.01;
-
-function computeRelativeOffset(self, other) {
-  const hasFacing =
-    typeof self.mapRelRad === 'number' &&
-    Number.isFinite(self.mapRelRad);
-
-  const hasStableHorizontalPosition =
-    typeof self.mapRelX === 'number' && Number.isFinite(self.mapRelX) &&
-    typeof self.mapRelZ === 'number' && Number.isFinite(self.mapRelZ) &&
-    typeof other.mapRelX === 'number' && Number.isFinite(other.mapRelX) &&
-    typeof other.mapRelZ === 'number' && Number.isFinite(other.mapRelZ);
-
-  if (!hasFacing || !hasStableHorizontalPosition) {
-    return NEUTRAL_OFFSET;
-  }
-
-  const dx = other.mapRelX - self.mapRelX;
-  const dy = other.y - self.y;
-  const dz = other.mapRelZ - self.mapRelZ;
-
-  if (Math.hypot(dx, dz) < MIN_HORIZONTAL_DISTANCE) {
-    return NEUTRAL_OFFSET;
-  }
-
-  const forwardX = Math.sin(self.mapRelRad);
-  const forwardZ = Math.cos(self.mapRelRad);
-  // Plain 90° rotation of the forward vector to get "right" - see the NOTE above.
-  const rightX = forwardZ;
-  const rightZ = -forwardX;
-
-  const forwardComponent = dx * forwardX + dz * forwardZ;
-  const rightComponent = dx * rightX + dz * rightZ;
-
-  // Web Audio's default listener faces -Z with +Y up, so "forward" maps to -Z here.
-  return { x: rightComponent, y: dy, z: -forwardComponent };
-}
-
 module.exports = {
   mapDistance,
   distanceGain,
   computeGain,
-  computeRelativeOffset,
   MIN_RANGE,
   MAX_RANGE,
 };
