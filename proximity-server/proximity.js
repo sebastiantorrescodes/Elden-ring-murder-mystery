@@ -73,17 +73,25 @@ function computeGain(self, other) {
 // disabled on that node - direction only, volume stays computeGain's job). Falls
 // back to a neutral straight-ahead direction whenever there isn't enough information
 // to compute a real one, rather than a stale or undefined direction: missing facing
-// data, or the two positions coinciding (no defined direction when distance is ~0).
+// data, missing map-relative position, or the two positions coinciding (no defined
+// direction when distance is ~0).
 //
 // NOTE: which world axis "yaw=0" faces was a first attempt ported from the DLL's
 // Camera struct. Left/right handedness has since been confirmed in-game and fixed
 // (see the rightX/rightZ comment below); front/back has not been separately
 // confirmed yet - if that ever comes out swapped too, negate forwardComponent below.
 //
-// Deliberately still uses raw x/y/z here rather than distance3D's mapX/mapY: yawCos/
-// yawSin come from the DLL's raw-coordinate-frame Camera read, so forward/right only
-// project correctly against dx/dz in that same raw frame - mixing in map coordinates
-// (a different, unrelated coordinate space) would scramble the panning direction.
+// dx/dz now come from mapRelX/mapRelZ (see the MapRelativeCoords comment in
+// WorldChrMan.h) rather than raw x/z: raw x/z was observed resetting discontinuously
+// when crossing a local map-tile boundary, which scrambled rightComponent/
+// forwardComponent's sign out of nowhere (perceived as left/right suddenly
+// swapping) even with no real facing/position change. mapRelX/mapRelZ come from the
+// same underlying per-player struct as raw x/y/z (same WorldChrMan base pointer,
+// just a different offset - see tryReadMapRelative), not from distance3D's mapX/mapY
+// (a different, unrelated CsMenuManImp-sourced coordinate space) - so they should
+// still project correctly against yawCos/yawSin's frame the way raw x/z did, just
+// without the tile-boundary discontinuity. dy is still raw y (a separate, smaller
+// concern - see mapDistance for why elevation specifically needed mapRelY).
 const NEUTRAL_OFFSET = { x: 0, y: 0, z: -1 };
 const MIN_HORIZONTAL_DISTANCE = 0.01;
 
@@ -94,13 +102,19 @@ function computeRelativeOffset(self, other) {
     typeof self.yawSin === 'number' &&
     Number.isFinite(self.yawSin);
 
-  if (!hasFacing) {
+  const hasStableHorizontalPosition =
+    typeof self.mapRelX === 'number' && Number.isFinite(self.mapRelX) &&
+    typeof self.mapRelZ === 'number' && Number.isFinite(self.mapRelZ) &&
+    typeof other.mapRelX === 'number' && Number.isFinite(other.mapRelX) &&
+    typeof other.mapRelZ === 'number' && Number.isFinite(other.mapRelZ);
+
+  if (!hasFacing || !hasStableHorizontalPosition) {
     return NEUTRAL_OFFSET;
   }
 
-  const dx = other.x - self.x;
+  const dx = other.mapRelX - self.mapRelX;
   const dy = other.y - self.y;
-  const dz = other.z - self.z;
+  const dz = other.mapRelZ - self.mapRelZ;
 
   if (Math.hypot(dx, dz) < MIN_HORIZONTAL_DISTANCE) {
     return NEUTRAL_OFFSET;

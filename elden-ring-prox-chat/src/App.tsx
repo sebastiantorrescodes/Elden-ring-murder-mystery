@@ -890,6 +890,8 @@ export default function App() {
           reading.hp,
           lastAreaRef.current?.oriDeg,
           lastMapRelativeRef.current?.y,
+          lastMapRelativeRef.current?.x,
+          lastMapRelativeRef.current?.z,
         );
       }
     });
