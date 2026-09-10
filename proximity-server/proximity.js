@@ -76,34 +76,40 @@ function computeGain(self, other) {
 // data, missing map-relative position, or the two positions coinciding (no defined
 // direction when distance is ~0).
 //
-// NOTE: which world axis "yaw=0" faces was a first attempt ported from the DLL's
-// Camera struct, never independently confirmed in-game. An earlier version of this
-// function flipped rightX/rightZ's sign after an in-game check reported left/right
-// backwards with the untouched rotation - that flip has since been reverted back to
-// the plain 90°-rotation-of-forward math below, per explicit request, without
-// re-testing. If left/right (or front/back, via forwardComponent) ever comes out
-// backwards again, that's the first place to look.
+// NOTE: which world axis "angle=0" faces was a first attempt, never independently
+// confirmed in-game. An earlier version of this function flipped rightX/rightZ's
+// sign after an in-game check reported left/right backwards with the untouched
+// rotation - that flip has since been reverted back to the plain
+// 90°-rotation-of-forward math below, per explicit request, without re-testing. If
+// left/right (or front/back, via forwardComponent) ever comes out backwards again,
+// that's the first place to look.
 //
-// dx/dz now come from mapRelX/mapRelZ (see the MapRelativeCoords comment in
+// dx/dz come from mapRelX/mapRelZ (see the MapRelativeCoords comment in
 // WorldChrMan.h) rather than raw x/z: raw x/z was observed resetting discontinuously
 // when crossing a local map-tile boundary, which scrambled rightComponent/
 // forwardComponent's sign out of nowhere (perceived as left/right suddenly
 // swapping) even with no real facing/position change. mapRelX/mapRelZ come from the
 // same underlying per-player struct as raw x/y/z (same WorldChrMan base pointer,
 // just a different offset - see tryReadMapRelative), not from distance3D's mapX/mapY
-// (a different, unrelated CsMenuManImp-sourced coordinate space) - so they should
-// still project correctly against yawCos/yawSin's frame the way raw x/z did, just
-// without the tile-boundary discontinuity. dy is still raw y (a separate, smaller
-// concern - see mapDistance for why elevation specifically needed mapRelY).
+// (a different, unrelated CsMenuManImp-sourced coordinate space).
+//
+// forwardX/forwardZ are derived from mapRelRad (this peer's own character facing)
+// instead of the Camera struct's yawCos/yawSin (the camera's facing): in a
+// third-person game the camera can be orbited to face a completely different
+// direction than the character actually does (e.g. spun around to look at your own
+// character's face while still walking forward), which would otherwise make the
+// whole soundstage rotate with the camera instead of staying tied to where players
+// actually are relative to each other. mapRelRad comes from the same struct as
+// mapRelX/mapRelZ, so it projects against them in the same coordinate frame. dy is
+// still raw y (a separate, smaller concern - see mapDistance for why elevation
+// specifically needed mapRelY).
 const NEUTRAL_OFFSET = { x: 0, y: 0, z: -1 };
 const MIN_HORIZONTAL_DISTANCE = 0.01;
 
 function computeRelativeOffset(self, other) {
   const hasFacing =
-    typeof self.yawCos === 'number' &&
-    Number.isFinite(self.yawCos) &&
-    typeof self.yawSin === 'number' &&
-    Number.isFinite(self.yawSin);
+    typeof self.mapRelRad === 'number' &&
+    Number.isFinite(self.mapRelRad);
 
   const hasStableHorizontalPosition =
     typeof self.mapRelX === 'number' && Number.isFinite(self.mapRelX) &&
@@ -123,8 +129,8 @@ function computeRelativeOffset(self, other) {
     return NEUTRAL_OFFSET;
   }
 
-  const forwardX = self.yawSin;
-  const forwardZ = self.yawCos;
+  const forwardX = Math.sin(self.mapRelRad);
+  const forwardZ = Math.cos(self.mapRelRad);
   // Plain 90° rotation of the forward vector to get "right" - see the NOTE above.
   const rightX = forwardZ;
   const rightZ = -forwardX;

@@ -74,7 +74,7 @@ function resolveDisplayName(value) {
   return 'Player';
 }
 
-// roomCode -> Map<peerId, { ws, displayName, x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY, oriDeg, mapRelY, mapRelX, mapRelZ }>
+// roomCode -> Map<peerId, { ws, displayName, x, y, z, mapId, underground, yawCos, yawSin, blockId, mapX, mapY, oriDeg, mapRelY, mapRelX, mapRelZ, mapRelRad }>
 const rooms = new Map();
 // roomCode -> peerId of whoever hosted it. If the host disconnects and the room
 // isn't empty, the close handler below promotes the longest-remaining peer rather
@@ -135,6 +135,7 @@ function makeInitialPeerState(ws, displayName) {
     mapRelY: undefined,
     mapRelX: undefined,
     mapRelZ: undefined,
+    mapRelRad: undefined,
   };
 }
 
@@ -683,19 +684,24 @@ wss.on('connection', (ws) => {
       // hp === 0 mutes this peer for everyone in the room (see computeGain) -
       // undefined (older client, manual test controls) is left un-mutable.
       peer.hp = isFiniteNumber(msg.hp) ? msg.hp : undefined;
-      // Character facing in degrees (see the Location comment in WorldChrMan.h) -
-      // stored but not yet consumed by computeGain/computeRelativeOffset, which
-      // still derive the listener's facing from yawCos/yawSin instead.
+      // Character facing in degrees, from a different subsystem (CsMenuManImp) than
+      // mapRelRad below - stored but not consumed by computeGain/computeRelativeOffset.
       peer.oriDeg = isFiniteNumber(msg.oriDeg) ? msg.oriDeg : undefined;
       // Map-relative position (see the MapRelativeCoords comment in WorldChrMan.h) -
       // unlike raw x/y/z above, these shouldn't reset when crossing a local map-tile
       // boundary in the open world. computeGain's mapDistance uses mapRelY instead of
-      // raw y for the elevation term, and computeRelativeOffset uses mapRelX/mapRelZ
-      // instead of raw x/z for the panning direction term - see hasMapPosition and
-      // computeRelativeOffset in proximity.js.
+      // raw y for the elevation term, and computeRelativeOffset uses mapRelX/mapRelZ/
+      // mapRelRad instead of raw x/z and yawCos/yawSin for the panning direction term
+      // - see hasMapPosition and computeRelativeOffset in proximity.js. mapRelRad is
+      // this peer's own character facing (not their camera's) - preferred over
+      // yawCos/yawSin because a third-person camera can be spun to face a different
+      // direction than the character actually does, and preferred over oriDeg
+      // because it shares the same underlying struct/coordinate frame as
+      // mapRelX/mapRelZ (see the MapRelativeCoords comment in WorldChrMan.h).
       peer.mapRelY = isFiniteNumber(msg.mapRelY) ? msg.mapRelY : undefined;
       peer.mapRelX = isFiniteNumber(msg.mapRelX) ? msg.mapRelX : undefined;
       peer.mapRelZ = isFiniteNumber(msg.mapRelZ) ? msg.mapRelZ : undefined;
+      peer.mapRelRad = isFiniteNumber(msg.mapRelRad) ? msg.mapRelRad : undefined;
       broadcastVolumes(room);
       return;
     }
