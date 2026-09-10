@@ -4,34 +4,41 @@ const MIN_RANGE = 5; // full volume at or below this distance
 const MAX_RANGE = 30; // silent at or beyond this distance
 
 // mapX/mapY (see the Location comment in WorldChrMan.h) come from each client's own
-// CsMenuManImp read, sent alongside raw x/y/z. mapX/mapY plus raw y (elevation -
-// Location has no third axis of its own, so the vertical component is borrowed
-// straight from the raw x/y/z reading below; y rather than z since the raw frame is
-// y-up - see computeRelativeOffset's panner mapping) drive the gain distance - no raw
-// x/z, and no blockId gating either (mapX/mapY alone proved reliable enough in
+// CsMenuManImp read, sent alongside raw x/y/z. mapX/mapY plus mapRelY (elevation -
+// see the MapRelativeCoords comment in WorldChrMan.h) drive the gain distance - no
+// raw x/y/z, and no blockId gating either (mapX/mapY alone proved reliable enough in
 // testing that the "confirmed different instance" blockId check was dropped - see
-// git history for sameBlock/DIFFERENT_AREA_GAIN if it's ever wanted back). One
-// consequence: a peer that hasn't reported map coordinates yet can't have a gain
-// computed at all - see hasMapPosition below.
+// git history for sameBlock/DIFFERENT_AREA_GAIN if it's ever wanted back). mapRelY
+// replaced raw y here specifically because raw y is only stable within the current
+// local map-tile grid cell and was observed flipping sign (which peer reads "higher")
+// across a tile-boundary crossing with no actual elevation change - mapRelY comes
+// from a different per-player struct (same base pointer, different offset - ported
+// from tremwil/minusone12's map-relative-teleport Cheat Engine script) that needs no
+// rebase to stay comparable across tiles in the open world. One consequence: a peer
+// that hasn't reported map coordinates (or mapRelY) yet can't have a gain computed at
+// all - see hasMapPosition below.
 function hasMapPosition(peer) {
   return (
     typeof peer.mapX === 'number' && Number.isFinite(peer.mapX) &&
-    typeof peer.mapY === 'number' && Number.isFinite(peer.mapY)
+    typeof peer.mapY === 'number' && Number.isFinite(peer.mapY) &&
+    typeof peer.mapRelY === 'number' && Number.isFinite(peer.mapRelY)
   );
 }
 
 // Weights elevation above mapX/mapY in the Euclidean sum (2.0 means a unit of
 // elevation contributes ELEVATION_WEIGHT^2 = 4x as much to the squared distance as a
 // unit of mapX/mapY, since the weight applies before squaring). Was 0.5, which made a
-// typical one-floor gap (~9-10 raw y units) collapse to ~4.9 weighted distance - under
-// MIN_RANGE (5), so two players a floor apart still got full volume with no falloff
-// at all.
+// typical one-floor gap (~9-10 units, back when this was tuned against raw y)
+// collapse to ~4.9 weighted distance - under MIN_RANGE (5), so two players a floor
+// apart still got full volume with no falloff at all. mapRelY uses the same
+// underlying unit scale as the old raw y, so this should still roughly hold, but
+// hasn't been re-verified against mapRelY specifically yet.
 const ELEVATION_WEIGHT = 2.0;
 
 function mapDistance(a, b) {
   const dx = a.mapX - b.mapX;
   const dy = a.mapY - b.mapY;
-  const dElevation = (a.y - b.y) * ELEVATION_WEIGHT;
+  const dElevation = (a.mapRelY - b.mapRelY) * ELEVATION_WEIGHT;
   return Math.sqrt(dx * dx + dy * dy + dElevation * dElevation);
 }
 
