@@ -173,6 +173,18 @@ bool WorldChrMan::tryReadMapRelative(int playerSlot, MapRelativeCoords& out) {
         out.z = *(float*)(base + 0x6C8);
         out.rad = *(float*)(base + 0x6CC);
         out.map = *(uint32_t*)(base + 0x6D0);
+
+        // Rebase x/z onto the open-world grid origin (area 0x3C/0x3D, 256-unit
+        // chunks) so they're stable across a local map-tile boundary crossing - see
+        // the MapRelativeCoords comment in WorldChrMan.h. Legacy areas are left
+        // unrebased.
+        uint8_t areaId = (out.map >> 24) & 0xFF;
+        if (areaId == 0x3C || areaId == 0x3D) {
+            uint8_t gridXNo = (out.map >> 16) & 0xFF;
+            uint8_t gridZNo = (out.map >> 8) & 0xFF;
+            out.x += 256.0f * gridXNo;
+            out.z += 256.0f * gridZNo;
+        }
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
@@ -192,6 +204,8 @@ void WorldChrMan::debugMapRelative(int playerSlot) {
     uint8_t gridXNo = (mrc.map >> 16) & 0xFF;
     uint8_t gridZNo = (mrc.map >> 8) & 0xFF;
     uint8_t variant = mrc.map & 0xFF;
+    // x/z below are already rebased onto the open-world grid origin when areaId is
+    // 0x3C/0x3D (tryReadMapRelative does this internally) - shown as read otherwise.
     std::cout << "Slot " << playerSlot << " mapRelative: x=" << mrc.x << " y=" << mrc.y << " z=" << mrc.z
                << " rad=" << mrc.rad << " map=0x" << std::hex << mrc.map
                << " (areaId=0x" << (int)areaId << " gridXNo=0x" << (int)gridXNo

@@ -40,12 +40,17 @@ struct Camera {
 // entry), but read at a different offset instead of detouring through +0x190/+0x68
 // into ChrIns's coord block - a second, parallel struct on the same object. Ported
 // from tremwil (minusone12)'s "map-relative teleport" Cheat Engine script (coords
-// credited to Pav there). x/z are relative to a 256-unit grid tile named by `map`
-// (area/gridX/gridZ packed into its bytes, matching this repo's own m<area>_<gridX>_
-// <gridZ>_<variant> map file naming) - see that script's getAbsoluteCoords for the
-// +256*gridXNo/+256*gridZNo rebase needed to compare x/z across tiles. y is NOT
-// tile-relative for the open world (area 0x3C/0x3D) per that same function - unlike
-// PlayerCoords.y, it should need no rebase to stay comparable across a tile
+// credited to Pav there). As read off the game, x/z are relative to a 256-unit grid
+// tile named by `map` (area/gridX/gridZ packed into its bytes, matching this repo's
+// own m<area>_<gridX>_<gridZ>_<variant> map file naming) - tryReadMapRelative
+// applies that script's getAbsoluteCoords rebase (+256*gridXNo/+256*gridZNo)
+// automatically for the open world (area 0x3C/0x3D) before returning, so by the time
+// this struct reaches a caller, x/z are already tile-boundary-stable there; legacy
+// (non-open-world) areas are returned unrebased, since gridX/gridZ aren't real
+// spatial grid coordinates there (more like a dungeon/variant index per that same
+// script) and a legacy instance should already be small enough not to need its own
+// floating-origin resets. y needs no rebase in either case per that same function -
+// unlike PlayerCoords.y, it shouldn't need to stay comparable across a tile
 // boundary. Unverified in this codebase until checked live against a known tile
 // crossing (same bar as Camera's yawCos/yawSin axis mapping).
 struct MapRelativeCoords {

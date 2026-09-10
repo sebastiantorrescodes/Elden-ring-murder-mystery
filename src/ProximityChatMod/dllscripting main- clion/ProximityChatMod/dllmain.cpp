@@ -126,18 +126,19 @@ DWORD WINAPI MainThread(LPVOID lpParam)
                 tcpTestClient.sendLine(blockLine.str());
             }
 
-            // This client's own current map-relative elevation (see MapRelativeCoords
+            // This client's own current map-relative position (see MapRelativeCoords
             // comment in WorldChrMan.h) - same "local client only, not per-slot"
             // pattern as the lines above, even though tryReadMapRelative itself is
-            // per-slot capable. Unlike the slot=... line's y (raw PlayerCoords), this
-            // shouldn't reset when crossing a local map-tile boundary in the open
-            // world - proximity.js's mapDistance uses it instead of raw y for the
-            // elevation term now. Only y is sent; x/z/rad/map aren't consumed by
-            // anything downstream yet.
+            // per-slot capable. Unlike the slot=... line's raw PlayerCoords, x/y/z
+            // here shouldn't reset when crossing a local map-tile boundary in the
+            // open world (tryReadMapRelative applies the grid rebase internally) -
+            // proximity.js's mapDistance uses y for elevation, and
+            // computeRelativeOffset uses x/z instead of raw x/z for panning
+            // direction now. rad/map aren't consumed downstream yet.
             MapRelativeCoords mapRel{};
             if (WorldChrMan::tryReadMapRelative(kLocalPlayerSlot, mapRel)) {
                 std::ostringstream mapRelLine;
-                mapRelLine << "mapRelative y=" << mapRel.y;
+                mapRelLine << "mapRelative x=" << mapRel.x << " y=" << mapRel.y << " z=" << mapRel.z;
                 tcpTestClient.sendLine(mapRelLine.str());
             }
         }
