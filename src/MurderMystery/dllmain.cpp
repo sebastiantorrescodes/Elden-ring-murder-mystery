@@ -172,7 +172,7 @@ namespace MM
     // --------------------------------------------------------
 
     constexpr int MAX_MM_PLAYERS = 16;
-    constexpr ULONGLONG SHERIFF_KILL_CREDIT_WINDOW_MS = 2500;
+    constexpr ULONGLONG SHERIFF_KILL_CREDIT_WINDOW_MS = 5000;
     ULONGLONG g_lastLocalSheriffHitMs = 0;
 
     // --------------------------------------------------------
@@ -321,6 +321,7 @@ namespace MM
     bool g_roundActive = false;
     bool g_volcanoItemCleanupRequested = false;
     bool g_playerDeathReported = false;
+    bool g_pendingReturnToHub = false;
     bool g_itemPointWasActive[10]{};
     bool g_startupLobbyRequested = false;
     bool g_lobbyStateInitialized = false;
@@ -4357,6 +4358,7 @@ namespace MM
             g_roundActive = false;
             g_playerDeathReported = false;
             g_lastLocalSheriffHitMs = 0;
+            g_pendingReturnToHub = false;
             g_volcanoItemCleanupRequested = false;
             ClearSheriffDropFlags();
 
@@ -4675,6 +4677,7 @@ namespace MM
             g_playerDeathReported = false;
             g_waitingForVolcanoLoad = false;
             g_volcanoLoadReported = false;
+            g_lastLocalSheriffHitMs = 0;
             ClearSheriffDropFlags();
 
             const uintptr_t player =
@@ -4708,25 +4711,56 @@ namespace MM
 
             if (shouldReturnToHub)
             {
-                if (player &&
-                    ApplySpEffectToChrIns(
-                        player,
-                        SPEFFECT_RETURN_TO_HUB_REQUEST))
+                PlayerState localState{};
+
+                if (TryReadPlayerSlot(0, localState) &&
+                    localState.alive)
                 {
-                    Log(
-                        "[NET] EndGame -> Local return to "
-                        "Roundtable requested.");
+                    if (HasSpEffect(SPEFFECT_IN_ROUNDTABLE))
+                    {
+                        // The normal death/respawn process already returned
+                        // this player, so another warp is unnecessary.
+                        g_pendingReturnToHub = false;
+
+                        Log(
+                            "[ROUND] EndGame -> Player is already "
+                            "in Roundtable.");
+                    }
+                    else if (ApplySpEffectToChrIns(
+                        localState.chrIns,
+                        SPEFFECT_RETURN_TO_HUB_REQUEST))
+                    {
+                        g_pendingReturnToHub = false;
+
+                        Log(
+                            "[NET] EndGame -> Local return to "
+                            "Roundtable requested.");
+                    }
+                    else
+                    {
+                        // Keep retrying from the main loop.
+                        g_pendingReturnToHub = true;
+
+                        Log(
+                            "[ROUND] EndGame -> Return request failed; "
+                            "will retry after respawn.");
+                    }
                 }
                 else
                 {
+                    // Do not warp a character whose death animation/state
+                    // is still being processed.
+                    g_pendingReturnToHub = true;
+
                     Log(
-                        "[ERROR] EndGame -> Failed to request "
-                        "local return to Roundtable.");
+                        "[ROUND] EndGame -> Return to Roundtable "
+                        "deferred until local player respawns.");
                 }
             }
             else
             {
-                // A deceased player may already be in Roundtable.
+                g_pendingReturnToHub = false;
+
                 if (player)
                 {
                     RemoveSpEffectFromChrIns(
@@ -4736,7 +4770,7 @@ namespace MM
 
                 Log(
                     "[ROUND] EndGame cleanup completed; "
-                    "player already returned through death.");
+                    "no return warp requested.");
             }
         }
         else
@@ -6060,28 +6094,54 @@ namespace MM
             {
                 const ULONGLONG deathCheckNow = GetTickCount64();
 
+                // An EndGame command received during the death animation
+                // defers the Roundtable request until the player is alive.
+                if (g_pendingReturnToHub &&
+                    localPlayer.alive)
+                {
+                    if (HasSpEffect(SPEFFECT_IN_ROUNDTABLE))
+                    {
+                        g_pendingReturnToHub = false;
+
+                        Log(
+                            "[ROUND] Deferred return completed naturally; "
+                            "player is already in Roundtable.");
+                    }
+                    else if (ApplySpEffectToChrIns(
+                        localPlayer.chrIns,
+                        SPEFFECT_RETURN_TO_HUB_REQUEST))
+                    {
+                        g_pendingReturnToHub = false;
+
+                        Log(
+                            "[ROUND] Deferred return to "
+                            "Roundtable requested.");
+                    }
+                    else
+                    {
+                        // Leave g_pendingReturnToHub true so the next
+                        // main-loop iteration tries again.
+                        Log(
+                            "[ROUND] Deferred return request failed; "
+                            "will retry.");
+                    }
+                }
+
                 // temp
-                if (localPlayer.alive &&
+                const bool hasSheriffHitMarker =
                     ChrInsHasSpEffect(
                         localPlayer.chrIns,
-                        SPEFFECT_SHERIFF_HIT_MARKER))
+                        SPEFFECT_SHERIFF_HIT_MARKER);
+
+                if (hasSheriffHitMarker)
                 {
                     if (g_lastLocalSheriffHitMs == 0)
                     {
-                        Log("[SHERIFF] Local player received hit marker 500060.");
+                        Log(
+                            "[SHERIFF] Local player received "
+                            "hit marker 500060.");
                     }
 
-                    g_lastLocalSheriffHitMs = deathCheckNow;
-                }
-
-                // 500060 is applied to the victim by Sheriff attacks. Latch the
-                // observation locally because active SpEffects may be cleared as
-                // part of the death transition before the next polling pass.
-                if (localPlayer.alive &&
-                    ChrInsHasSpEffect(
-                        localPlayer.chrIns,
-                        SPEFFECT_SHERIFF_HIT_MARKER))
-                {
                     g_lastLocalSheriffHitMs = deathCheckNow;
                 }
 
@@ -6103,6 +6163,8 @@ namespace MM
                     if (mmTcpClient.sendLine(eventLine))
                     {
                         g_playerDeathReported = true;
+                        g_lastLocalSheriffHitMs = 0;
+                        
                         Log(
                             "[ROUND] Reported PlayerDied for round=" +
                             g_activeRoundId +
