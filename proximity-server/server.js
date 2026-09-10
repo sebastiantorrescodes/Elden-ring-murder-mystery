@@ -1108,7 +1108,7 @@ wss.on('connection', (ws) => {
 
           const sheriffAttributed =
             hit !== null &&
-            Date.now() - hit.receivedAt <= 2000;
+            Date.now() - hit.receivedAt <= 1500;
 
           if (sheriffAttributed) {
             const sheriffId =

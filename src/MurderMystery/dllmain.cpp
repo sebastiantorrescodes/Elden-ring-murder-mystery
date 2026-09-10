@@ -4043,6 +4043,15 @@ namespace MM
         const Role oldRole =
             GetCurrentRole();
 
+        if (role != Role::Sheriff)
+        {
+            RemoveSpEffectFromChrIns(
+                player,
+                SPEFFECT_SHERIFF_HIT_MARKER);
+
+            g_sheriffHitPulseHandled = false;
+        }
+
         // --------------------------------------------------------
         // New Sheriff starts with a fresh punishment state.
         // --------------------------------------------------------
@@ -5704,13 +5713,6 @@ namespace MM
                             "[SHERIFF] Innocent claimed "
                             "dropped Sheriff kit.");
 
-                        // Apply the Sheriff role immediately. A real coordinated
-                        // drop is also reported below so the server updates its
-                        // authoritative role table and clears every client's VFX.
-                        // An F1-only local test has no server-side drop record, but
-                        // must still prove that the pickup/role transition works.
-                        SetLocalRole(Role::Sheriff);
-
                         mmTcpClient.sendLine(
                             "event=SheriffKitPickedUp round=" +
                             g_activeRoundId);
@@ -5744,76 +5746,6 @@ namespace MM
             {
                 ExecuteCommand(MMCommand::SetMurderer);
             }
-
-            if (WasKeyPressed(VK_F5))
-            {
-                const uintptr_t player =
-                    GetLocalPlayerIns();
-
-                if (player &&
-                    ApplySpEffectToChrIns(
-                        player,
-                        SPEFFECT_VICTORY_REQUEST))
-                {
-                    Log(
-                        "[BANNER TEST] F5 -> Local Victory requested.");
-                }
-            }
-
-            if (WasKeyPressed(VK_F6))
-            {
-                const uintptr_t player =
-                    GetLocalPlayerIns();
-
-                if (player &&
-                    ApplySpEffectToChrIns(
-                        player,
-                        SPEFFECT_SHERIFF_HIT_MARKER))
-                {
-                    Log(
-                        "[TEST] F6 -> Applied Sheriff "
-                        "hit marker 500060 locally.");
-                }
-                else
-                {
-                    Log(
-                        "[ERROR] F6 -> Failed to apply "
-                        "Sheriff hit marker 500060.");
-                }
-            }
-
-            if (WasKeyPressed(VK_F7))
-            {
-                const uintptr_t player =
-                    GetLocalPlayerIns();
-
-                if (player &&
-                    ApplySpEffectToChrIns(
-                        player,
-                        SPEFFECT_STALEMATE_REQUEST))
-                {
-                    Log(
-                        "[BANNER TEST] F7 -> Local Stalemate requested.");
-                }
-            }
-
-
-            // F8 = COMMENCE
-            if (WasKeyPressed(VK_F8))
-            {
-                const uintptr_t player =
-                    GetLocalPlayerIns();
-
-                if (player &&
-                    ApplySpEffectToChrIns(
-                        player,
-                        SPEFFECT_COMMENCE_REQUEST))
-                {
-                    Log(
-                        "[BANNER TEST] F8 -> Local Commence requested.");
-                }
-            }
-
 
             // F9 = return to Roundtable
             if (WasKeyPressed(VK_F9))
@@ -5851,13 +5783,6 @@ namespace MM
             if (WasKeyPressed(VK_F11))
             {
                 RequestRandomItemSpawn();
-            }
-
-            if (WasKeyPressed(VK_F12))
-            {
-                Log("[TEST] F12 -> Round cleanup.");
-
-                RequestRoundCleanup();
             }
 
             if (currentRole == Role::Innocent)
@@ -6138,9 +6063,13 @@ namespace MM
                         {
                             g_sheriffHitPulseHandled = true;
 
+                            RemoveSpEffectFromChrIns(
+                                localPlayer.chrIns,
+                                SPEFFECT_SHERIFF_HIT_MARKER);
+
                             Log(
-                                "[SHERIFF] Reported confirmed "
-                                "Sheriff hit to server.");
+                                "[SHERIFF] Reported Sheriff "
+                                "shot to server.");
                         }
                     }
                 }
