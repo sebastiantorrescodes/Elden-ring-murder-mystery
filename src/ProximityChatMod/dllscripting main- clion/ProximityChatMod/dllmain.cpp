@@ -33,36 +33,69 @@ constexpr int kLocalPlayerSlot = 0;
 
 DWORD WINAPI MainThread(LPVOID lpParam)
 {
-    WorldChrMan mainBase = WorldChrMan::Make();
+    // Discarded return value - Make() is what runs the signature scan populating
+    // WorldChrManIns/GameManIns/CsMenuManImpIns/FieldAreaIns, which every tryRead*
+    // call below depends on. Needs to happen once up front so the TCP poll loop
+    // works immediately, without waiting on a NUMPAD3 press.
+    WorldChrMan::Make();
 
     TcpTestClient tcpTestClient("127.0.0.1", 9191);
     unsigned long long nextTcpPollMs = 0;
 
 	while (true) {
+        // Prints a single clean snapshot of the local player's own current stats -
+        // deliberately local-player-only (no other slot probing): each participant
+        // runs their own DLL+app instance and self-reports just their own state (see
+        // the kLocalPlayerSlot comment above and the TCP poll loop below), so another
+        // slot's raw data was never actually meaningful for this client to display.
         if (GetAsyncKeyState(VK_NUMPAD3) & 1) {
-            WorldChrMan freshBase = WorldChrMan::Make();
-            std::cout << "mainBase(startup) addr: " << std::hex << mainBase.GetAddress()
-                       << ", freshBase(rescanned) addr: " << freshBase.GetAddress() << std::dec << std::endl;
-            WorldChrMan::debugPlayerCount();
-            WorldChrMan::debugLocation();
-            WorldChrMan::debugCamera();
-            WorldChrMan::debugBlockId();
-            if (!freshBase.isLoaded()) {
-                std::cout << "WorldChrMan not loaded, cannot read player coords" << std::endl;
+            if (!WorldChrMan::Make().isLoaded()) {
+                std::cout << "Local player: WorldChrMan not loaded" << std::endl;
             } else {
-                int playerCount = WorldChrMan::getPlayerCount();
-                std::cout << "Player count: " << playerCount << std::endl;
-                for (int i = 0; i < playerCount; i++) {
-                    WorldChrMan::debugSlot(i);
-                    WorldChrMan::debugMapRelative(i);
+                std::cout << "=== Local player ===" << std::endl;
+
+                PlayerCoords coords{};
+                if (WorldChrMan::tryReadSlot(kLocalPlayerSlot, coords)) {
+                    std::cout << "Position: x=" << coords.x << " y=" << coords.y << " z=" << coords.z
+                               << " hp=" << coords.hp << "/" << coords.maxHp << std::endl;
+                } else {
+                    std::cout << "Position: unavailable" << std::endl;
                 }
-                std::cout << "-- safe probe of slots 1-3 regardless of reported count --" << std::endl;
-                WorldChrMan::debugSlot(1);
-                WorldChrMan::debugMapRelative(1);
-                WorldChrMan::debugSlot(2);
-                WorldChrMan::debugMapRelative(2);
-                WorldChrMan::debugSlot(3);
-                WorldChrMan::debugMapRelative(3);
+
+                Location loc{};
+                if (WorldChrMan::tryReadLocation(loc)) {
+                    std::cout << "Map: mapX=" << loc.x << " mapY=" << loc.y << " oriDeg=" << loc.oriDeg
+                               << " (mapId=" << loc.mapId << " underground=" << loc.underground << ")" << std::endl;
+                } else {
+                    std::cout << "Map: unavailable" << std::endl;
+                }
+
+                Camera cam{};
+                if (WorldChrMan::tryReadCamera(cam)) {
+                    std::cout << "Camera: yawCos=" << cam.yawCos << " yawSin=" << cam.yawSin << std::endl;
+                } else {
+                    std::cout << "Camera: unavailable" << std::endl;
+                }
+
+                MapRelativeCoords mapRel{};
+                if (WorldChrMan::tryReadMapRelative(kLocalPlayerSlot, mapRel)) {
+                    uint8_t areaId = (mapRel.map >> 24) & 0xFF;
+                    uint8_t gridXNo = (mapRel.map >> 16) & 0xFF;
+                    uint8_t gridZNo = (mapRel.map >> 8) & 0xFF;
+                    std::cout << "MapRelative: x=" << mapRel.x << " y=" << mapRel.y << " z=" << mapRel.z
+                               << " rad=" << mapRel.rad << " (areaId=0x" << std::hex << (int)areaId
+                               << " gridX=0x" << (int)gridXNo << " gridZ=0x" << (int)gridZNo << std::dec << ")"
+                               << std::endl;
+                } else {
+                    std::cout << "MapRelative: unavailable" << std::endl;
+                }
+
+                uint32_t blockId = 0;
+                if (WorldChrMan::tryReadBlockId(blockId)) {
+                    std::cout << "BlockId: " << blockId << std::endl;
+                } else {
+                    std::cout << "BlockId: unavailable" << std::endl;
+                }
             }
         }
 
@@ -134,11 +167,17 @@ DWORD WINAPI MainThread(LPVOID lpParam)
             // open world (tryReadMapRelative applies the grid rebase internally) -
             // proximity.js's mapDistance uses y for elevation, and
             // computeRelativeOffset uses x/z instead of raw x/z for panning
-            // direction now. rad/map aren't consumed downstream yet.
+            // direction now. rad is this client's own character facing (not the
+            // camera's - contrast with the "camera yawCos/yawSin" line above), and
+            // is what computeRelativeOffset now uses to build its forward/right
+            // basis instead of yawCos/yawSin, since a third-person camera can be
+            // spun to face a completely different direction than the character
+            // actually does. map isn't consumed downstream yet.
             MapRelativeCoords mapRel{};
             if (WorldChrMan::tryReadMapRelative(kLocalPlayerSlot, mapRel)) {
                 std::ostringstream mapRelLine;
-                mapRelLine << "mapRelative x=" << mapRel.x << " y=" << mapRel.y << " z=" << mapRel.z;
+                mapRelLine << "mapRelative x=" << mapRel.x << " y=" << mapRel.y << " z=" << mapRel.z
+                           << " rad=" << mapRel.rad;
                 tcpTestClient.sendLine(mapRelLine.str());
             }
         }

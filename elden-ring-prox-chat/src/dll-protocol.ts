@@ -99,22 +99,28 @@ export function parseBlockLine(line: string): DllBlockReading | null {
 // raw ChrIns x/y/z, and (in the open world) shouldn't reset when crossing a local
 // map-tile boundary the way raw x/y/z does (the DLL applies the grid rebase before
 // sending). y feeds proximity.js's elevation term; x/z feed its panning direction
-// term. rad/map aren't on the wire - nothing downstream consumes them yet.
+// term. rad is this client's own character facing (not the camera's - see the
+// "camera" line's yawCos/yawSin) - proximity.js's computeRelativeOffset uses it
+// instead of yawCos/yawSin for the forward/right basis now, since a third-person
+// camera can be spun to face a different direction than the character actually
+// does. map isn't on the wire - nothing downstream consumes it yet.
 export interface DllMapRelativeReading {
   x: number;
   y: number;
   z: number;
+  rad: number;
 }
 
-const MAP_RELATIVE_LINE_PATTERN = /^mapRelative x=([-\d.]+) y=([-\d.]+) z=([-\d.]+)$/;
+const MAP_RELATIVE_LINE_PATTERN = /^mapRelative x=([-\d.]+) y=([-\d.]+) z=([-\d.]+) rad=([-\d.]+)$/;
 
 export function parseMapRelativeLine(line: string): DllMapRelativeReading | null {
   const match = MAP_RELATIVE_LINE_PATTERN.exec(line.trim());
   if (!match) return null;
-  const [, x, y, z] = match;
+  const [, x, y, z, rad] = match;
   return {
     x: Number(x),
     y: Number(y),
     z: Number(z),
+    rad: Number(rad),
   };
 }

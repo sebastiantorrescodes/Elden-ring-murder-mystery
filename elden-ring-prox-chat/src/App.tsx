@@ -892,6 +892,7 @@ export default function App() {
           lastMapRelativeRef.current?.y,
           lastMapRelativeRef.current?.x,
           lastMapRelativeRef.current?.z,
+          lastMapRelativeRef.current?.rad,
         );
       }
     });
