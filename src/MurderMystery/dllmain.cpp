@@ -6060,6 +6060,20 @@ namespace MM
             {
                 const ULONGLONG deathCheckNow = GetTickCount64();
 
+                // temp
+                if (localPlayer.alive &&
+                    ChrInsHasSpEffect(
+                        localPlayer.chrIns,
+                        SPEFFECT_SHERIFF_HIT_MARKER))
+                {
+                    if (g_lastLocalSheriffHitMs == 0)
+                    {
+                        Log("[SHERIFF] Local player received hit marker 500060.");
+                    }
+
+                    g_lastLocalSheriffHitMs = deathCheckNow;
+                }
+
                 // 500060 is applied to the victim by Sheriff attacks. Latch the
                 // observation locally because active SpEffects may be cleared as
                 // part of the death transition before the next polling pass.
