@@ -172,8 +172,7 @@ namespace MM
     // --------------------------------------------------------
 
     constexpr int MAX_MM_PLAYERS = 16;
-    constexpr ULONGLONG SHERIFF_KILL_CREDIT_WINDOW_MS = 5000;
-    ULONGLONG g_lastLocalSheriffHitMs = 0;
+    bool g_sheriffHitPulseHandled = false;
 
     // --------------------------------------------------------
 
@@ -3984,18 +3983,6 @@ namespace MM
             return false;
         }
 
-        const uintptr_t player =
-            GetLocalPlayerIns();
-
-        if (player &&
-            !HasSpEffect(
-                SPEFFECT_SHERIFF_ATTACK_TAGGER))
-        {
-            ApplySpEffectToChrIns(
-                player,
-                SPEFFECT_SHERIFF_ATTACK_TAGGER);
-        }
-
         Log("[ROLE] Sheriff loadout applied.");
         return true;
     }
@@ -4357,7 +4344,7 @@ namespace MM
             g_volcanoLoadReported = false;
             g_roundActive = false;
             g_playerDeathReported = false;
-            g_lastLocalSheriffHitMs = 0;
+            g_sheriffHitPulseHandled = false;
             g_pendingReturnToHub = false;
             g_volcanoItemCleanupRequested = false;
             ClearSheriffDropFlags();
@@ -4515,7 +4502,7 @@ namespace MM
             g_volcanoLoadReported = true;
             g_roundActive = true;
             g_playerDeathReported = false;
-            g_lastLocalSheriffHitMs = 0;
+            g_sheriffHitPulseHandled = false;
 
             const uintptr_t player =
                 GetLocalPlayerIns();
@@ -4677,7 +4664,7 @@ namespace MM
             g_playerDeathReported = false;
             g_waitingForVolcanoLoad = false;
             g_volcanoLoadReported = false;
-            g_lastLocalSheriffHitMs = 0;
+            g_sheriffHitPulseHandled = false;
             ClearSheriffDropFlags();
 
             const uintptr_t player =
@@ -5781,10 +5768,17 @@ namespace MM
                 if (player &&
                     ApplySpEffectToChrIns(
                         player,
-                        SPEFFECT_DEFEAT_REQUEST))
+                        SPEFFECT_SHERIFF_HIT_MARKER))
                 {
                     Log(
-                        "[BANNER TEST] F6 -> Local Defeat requested.");
+                        "[TEST] F6 -> Applied Sheriff "
+                        "hit marker 500060 locally.");
+                }
+                else
+                {
+                    Log(
+                        "[ERROR] F6 -> Failed to apply "
+                        "Sheriff hit marker 500060.");
                 }
             }
 
@@ -6127,49 +6121,52 @@ namespace MM
                     }
                 }
 
-                // temp
-                const bool hasSheriffHitMarker =
+                const bool hasSheriffHitPulse =
+                    g_roundActive &&
+                    GetCurrentRole() == Role::Sheriff &&
                     ChrInsHasSpEffect(
                         localPlayer.chrIns,
                         SPEFFECT_SHERIFF_HIT_MARKER);
 
-                if (hasSheriffHitMarker)
+                if (hasSheriffHitPulse)
                 {
-                    if (g_lastLocalSheriffHitMs == 0)
+                    if (!g_sheriffHitPulseHandled)
                     {
-                        Log(
-                            "[SHERIFF] Local player received "
-                            "hit marker 500060.");
-                    }
+                        if (mmTcpClient.sendLine(
+                            "event=SheriffHit round=" +
+                            g_activeRoundId))
+                        {
+                            g_sheriffHitPulseHandled = true;
 
-                    g_lastLocalSheriffHitMs = deathCheckNow;
+                            Log(
+                                "[SHERIFF] Reported confirmed "
+                                "Sheriff hit to server.");
+                        }
+                    }
+                }
+                else
+                {
+                    // Permit the next distinct hit pulse to be reported.
+                    g_sheriffHitPulseHandled = false;
                 }
 
                 if (g_roundActive &&
                     !g_playerDeathReported &&
                     !localPlayer.alive)
                 {
-                    const bool sheriffAttributed =
-                        g_lastLocalSheriffHitMs != 0 &&
-                        deathCheckNow - g_lastLocalSheriffHitMs <=
-                            SHERIFF_KILL_CREDIT_WINDOW_MS;
-
                     const std::string eventLine =
                         "event=PlayerDied round=" +
                         g_activeRoundId +
-                        " cause=" +
-                        (sheriffAttributed ? "Sheriff" : "Other");
+                        " cause=Other";
 
                     if (mmTcpClient.sendLine(eventLine))
                     {
                         g_playerDeathReported = true;
-                        g_lastLocalSheriffHitMs = 0;
-                        
+
                         Log(
                             "[ROUND] Reported PlayerDied for round=" +
                             g_activeRoundId +
-                            " cause=" +
-                            (sheriffAttributed ? "Sheriff" : "Other"));
+                            " cause=Other");
                     }
                 }
 
