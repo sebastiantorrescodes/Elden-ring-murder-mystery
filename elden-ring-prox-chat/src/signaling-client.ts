@@ -188,8 +188,8 @@ export class SignalingClient {
   // mapId/underground/yawCos/yawSin/blockId/mapX/mapY/hp/oriDeg/mapRelY/mapRelX/
   // mapRelZ/mapRelRad are all optional: an older client or the manual test controls
   // that omit them are treated by the server as "unknown" rather than being
-  // penalized (area/block: trust distance; facing: no directional cue; hp: not
-  // muted). blockId is what the server actually gates proximity on -
+  // penalized (area/block: trust distance; facing: no directional cue).
+  // blockId is what the server actually gates proximity on -
   // mapId/underground/mapX/mapY are kept for other potential uses but don't drive
   // that decision (yet, for mapX/mapY - see the Location comment in
   // WorldChrMan.h). hp === 0 mutes this peer's mic for everyone, regardless of
@@ -199,6 +199,15 @@ export class SignalingClient {
   // boundary the way raw y does. mapRelX/mapRelZ/mapRelRad aren't currently
   // consumed server-side (directional/panning audio, which used to use them, was
   // removed) - still sent in case direction is ever revisited.
+  // WorldChrMan.h). HP is telemetry only; the server's authoritative round life
+  // state controls whether a listener may hear a Ghost. mapRelY/mapRelX/mapRelZ (see the
+  // MapRelativeCoords comment in WorldChrMan.h) are what computeGain's mapDistance
+  // (y) and computeRelativeOffset's panning direction (x/z) use instead of raw
+  // y/x/z, since they shouldn't reset when crossing a local map-tile boundary the
+  // way raw x/y/z does. mapRelRad is this client's own character facing (not the
+  // camera's, unlike yawCos/yawSin) - computeRelativeOffset now uses it instead of
+  // yawCos/yawSin for the forward/right basis, since a third-person camera can be
+  // spun to face a different direction than the character actually does.
   sendPosition(
     x: number,
     y: number,

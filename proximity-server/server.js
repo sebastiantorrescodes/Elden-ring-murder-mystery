@@ -14,9 +14,24 @@ const MIN_GAME_PLAYERS = 1;
 const MAX_GAME_PLAYERS = 6;
 const SPAWN_COUNT = 11;
 
-// temp
-const ENABLE_TWO_PLAYER_FAKE_MURDERER = true;
+// Temporary test modes. Leave MM_SOLO_TEST_ROLE unset to disable solo role
+// testing. The existing two-player fake-Murderer mode remains enabled by
+// default until MM_TWO_PLAYER_FAKE_MURDERER=0 is supplied.
+const VALID_TEST_ROLES = new Set(['Murderer', 'Sheriff', 'Innocent']);
+// A one-player test defaults to Innocent. Set Sheriff/Murderer explicitly to
+// exercise those paths, or set Off to disable solo fake-role assignment.
+const requestedSoloTestRole = process.env.MM_SOLO_TEST_ROLE || 'Innocent';
+const SOLO_TEST_ROLE = VALID_TEST_ROLES.has(requestedSoloTestRole)
+  ? requestedSoloTestRole
+  : null;
+const ENABLE_TWO_PLAYER_FAKE_MURDERER =
+  process.env.MM_TWO_PLAYER_FAKE_MURDERER !== '0';
 const TWO_PLAYER_FAKE_MURDERER_ID = '__test_fake_murderer__';
+const SOLO_FAKE_PLAYER_IDS = {
+  Murderer: '__test_fake_murderer__',
+  Sheriff: '__test_fake_sheriff__',
+  Innocent: '__test_fake_innocent__',
+};
 
 const MIN_ROUND_DURATION_MS = 60_000;
 const MAX_ROUND_DURATION_MS = 10 * 60_000;
@@ -120,6 +135,9 @@ function makeInitialPeerState(ws, displayName) {
     inRoundtable: false,
     gameConnected: false,
     micMuted: false,
+    // undefined outside a round; true for a living participant and false for a
+    // Ghost spectator. This is used only for the directional voice matrix.
+    roundAlive: undefined,
     x: undefined,
     y: undefined,
     z: undefined,
@@ -211,6 +229,8 @@ function resetRoomToWaiting(roomId, expectedRoundId) {
   // may still be completing the return warp.
   for (const [id, peer] of room) {
     peer.ready = false;
+    // Restore ordinary room voice while everyone returns to the lobby.
+    peer.roundAlive = undefined;
 
     broadcast(room, {
       type: 'peer-ready',
@@ -509,8 +529,13 @@ function evaluateRoundState(roomId) {
     return;
   }
 
-  const anyNonMurdererAlive = round.participantIds.some(
-    (id) =>
+  // roleByPlayerId also contains server-only fake players in explicit test
+  // modes. Counting those entries is what lets a solo Sheriff/Innocent become
+  // a Ghost without immediately ending the test round. In normal games every
+  // entry is a real participant, so behavior is unchanged.
+  const anyNonMurdererAlive = [...round.roleByPlayerId.entries()].some(
+    ([id, role]) =>
+      role !== 'Murderer' &&
       id !== murdererId &&
       round.aliveByPlayerId.get(id) === true,
   );
@@ -679,8 +704,9 @@ wss.on('connection', (ws) => {
       peer.blockId = isFiniteNumber(msg.blockId) ? msg.blockId : undefined;
       peer.mapX = isFiniteNumber(msg.mapX) ? msg.mapX : undefined;
       peer.mapY = isFiniteNumber(msg.mapY) ? msg.mapY : undefined;
-      // hp === 0 mutes this peer for everyone in the room (see computeGain) -
-      // undefined (older client, manual test controls) is left un-mutable.
+      // HP remains useful telemetry, but it no longer determines voice access.
+      // A respawned Ghost has positive HP; computeGain uses server-owned
+      // roundAlive instead.
       peer.hp = isFiniteNumber(msg.hp) ? msg.hp : undefined;
       peer.oriDeg = isFiniteNumber(msg.oriDeg) ? msg.oriDeg : undefined;
       // Map-relative position (see the MapRelativeCoords comment in WorldChrMan.h) -
@@ -839,12 +865,38 @@ wss.on('connection', (ws) => {
         ENABLE_TWO_PLAYER_FAKE_MURDERER &&
         participantIds.length === 2;
 
-      if (useFakeMurderer) {
+      const useSoloRoleTest =
+        SOLO_TEST_ROLE !== null &&
+        participantIds.length === 1;
+
+      const fakePlayerIds = [];
+
+      if (useSoloRoleTest) {
+        const realPlayerId = participantIds[0];
+        roleByPlayerId.set(realPlayerId, SOLO_TEST_ROLE);
+
+        for (const role of VALID_TEST_ROLES) {
+          if (role === SOLO_TEST_ROLE) continue;
+
+          const fakeId = SOLO_FAKE_PLAYER_IDS[role];
+          fakePlayerIds.push(fakeId);
+          roleByPlayerId.set(fakeId, role);
+        }
+
+        log(
+          `[test] solo role mode enabled; ` +
+          `real="${realPlayerId}" role=${SOLO_TEST_ROLE} ` +
+          `fakeRoles=${[...VALID_TEST_ROLES]
+            .filter((role) => role !== SOLO_TEST_ROLE)
+            .join(',')}`,
+        );
+      } else if (useFakeMurderer) {
         // The fake murderer exists only in server-side round state.
         roleByPlayerId.set(
           TWO_PLAYER_FAKE_MURDERER_ID,
           'Murderer',
         );
+        fakePlayerIds.push(TWO_PLAYER_FAKE_MURDERER_ID);
 
         // Randomly choose which real player starts as Sheriff.
         roleByPlayerId.set(
@@ -894,10 +946,11 @@ wss.on('connection', (ws) => {
         roundEnded: false,
         aliveByPlayerId: new Map([
           ...participantIds.map((id) => [id, true]),
-          ...(useFakeMurderer
-            ? [[TWO_PLAYER_FAKE_MURDERER_ID, true]]
-            : []),
+          ...fakePlayerIds.map((id) => [id, true]),
         ]),
+        ghostByPlayerId: new Map(
+          participantIds.map((id) => [id, false]),
+        ),
         activeTimer: null,
         resultTimer: null,
         resetTimer: null,
@@ -912,6 +965,11 @@ wss.on('connection', (ws) => {
         roomId,
         round,
       );
+
+      for (const id of participantIds) {
+        const participant = room.get(id);
+        if (participant) participant.roundAlive = true;
+      }
 
       broadcastRoundState(room, 'LOADING');
 
@@ -969,6 +1027,7 @@ wss.on('connection', (ws) => {
         if (
           round.state !== 'ACTIVE' ||
           round.roundEnded ||
+          round.aliveByPlayerId.get(peerId) !== true ||
           !Number.isInteger(msg.index) ||
           msg.index < 1 ||
           msg.index > ITEM_SPAWN_POINT_COUNT
@@ -1050,9 +1109,34 @@ wss.on('connection', (ws) => {
 
         round.aliveByPlayerId.set(victimId, false);
 
+        const victimPeer = room.get(victimId);
+        if (victimPeer) victimPeer.roundAlive = false;
+
+        let ghostSpawn = null;
+
+        // A Murderer death ends the round, so it must never start the spectator
+        // respawn pipeline. Only Innocents and Sheriffs become Ghosts.
+        if (victimRole === 'Innocent' || victimRole === 'Sheriff') {
+          round.ghostByPlayerId.set(victimId, true);
+          // The Roundtable start-warp EMEVD stores this same Volcano point as
+          // the native respawn point. Reuse it here for diagnostics/protocol
+          // consistency; no Roundtable -> Volcano bounce is performed on death.
+          ghostSpawn = round.spawnByPlayerId.get(victimId);
+
+          sendCommand(room, victimId, 'EnterGhost', {
+            round: round.id,
+            spawn: String(ghostSpawn),
+          });
+        }
+
+        // Recalculate immediately so living clients stop hearing the victim as
+        // soon as the authoritative death event is accepted.
+        broadcastVolumes(room);
+
         log(
           `[game-event] PlayerDied "${victimId}" ` +
           `role=${victimRole || 'Unknown'} ` +
+          `ghostSpawn=${ghostSpawn ?? 'none'} ` +
           `round="${round.id}"`,
         );
 
@@ -1098,7 +1182,7 @@ wss.on('connection', (ws) => {
 
           const sheriffAttributed =
             hit !== null &&
-            Date.now() - hit.receivedAt <= 2000;
+            Date.now() - hit.receivedAt <= 1500;
 
           if (sheriffAttributed) {
             const sheriffId =
