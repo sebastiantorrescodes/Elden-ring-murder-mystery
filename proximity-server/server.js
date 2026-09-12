@@ -2,7 +2,7 @@
 
 const crypto = require('node:crypto');
 const { WebSocketServer } = require('ws');
-const { computeGain, computeRelativeOffset } = require('./proximity');
+const { computeGain } = require('./proximity');
 
 const PORT = process.env.PORT || 8080;
 // Set on the VPS so randoms can't spin up rooms on your server. Unset (local dev) =
@@ -545,13 +545,12 @@ function evaluateRoundState(roomId) {
   }
 }
 
-// Recomputes every pairwise distance/direction in the room and sends each peer its
-// own volume+direction map for the others. The proximity "game logic" lives here so
-// every listener agrees on the same values instead of each client computing its own
-// (and potentially disagreeing, or being tampered with client-side). The relative
-// offset is already rotated into each listener's own facing frame server-side (see
-// computeRelativeOffset), so the client can feed it straight into a PannerNode
-// without needing to do any of that rotation itself.
+// Recomputes every pairwise distance in the room and sends each peer its own volume
+// map for the others. The proximity "game logic" lives here so every listener
+// agrees on the same values instead of each client computing its own (and
+// potentially disagreeing, or being tampered with client-side). No directional
+// component anymore - just gain (see computeGain); the client renders each peer at
+// a fixed, unpanned position.
 function broadcastVolumes(room) {
   const peers = [...room.entries()];
   for (const [selfId, self] of peers) {
@@ -559,12 +558,8 @@ function broadcastVolumes(room) {
     const volumes = {};
     for (const [otherId, other] of peers) {
       if (otherId === selfId || other.x === undefined) continue;
-      const offset = computeRelativeOffset(self, other);
       volumes[otherId] = {
         gain: computeGain(self, other),
-        relX: offset.x,
-        relY: offset.y,
-        relZ: offset.z,
       };
     }
     send(self.ws, { type: 'volumes', volumes });
@@ -695,10 +690,13 @@ wss.on('connection', (ws) => {
       peer.y = msg.y;
       peer.z = msg.z;
       // Optional - a client that doesn't send these (mock-client.js, manual test
-      // controls, or an older build) is treated by computeGain as "block unknown"
-      // and by computeRelativeOffset as "facing unknown" (neutral direction).
+      // controls, or an older build) is treated by computeGain as "block unknown".
       // mapId/underground are stored but no longer drive the proximity decision -
-      // blockId is what computeGain/computeRelativeOffset actually gate on now.
+      // blockId is what computeGain actually gates on now. yawCos/yawSin/oriDeg/
+      // mapRelX/mapRelZ/mapRelRad are all still polled and stored below, but nothing
+      // currently consumes them - directional/panning audio was removed (it used to
+      // read these for a facing/rotation calculation), keeping the fields themselves
+      // in case direction is ever revisited.
       peer.mapId = isFiniteNumber(msg.mapId) ? msg.mapId : undefined;
       peer.underground = isFiniteNumber(msg.underground) ? msg.underground : undefined;
       peer.yawCos = isFiniteNumber(msg.yawCos) ? msg.yawCos : undefined;
@@ -710,20 +708,12 @@ wss.on('connection', (ws) => {
       // A respawned Ghost has positive HP; computeGain uses server-owned
       // roundAlive instead.
       peer.hp = isFiniteNumber(msg.hp) ? msg.hp : undefined;
-      // Character facing in degrees, from a different subsystem (CsMenuManImp) than
-      // mapRelRad below - stored but not consumed by computeGain/computeRelativeOffset.
       peer.oriDeg = isFiniteNumber(msg.oriDeg) ? msg.oriDeg : undefined;
       // Map-relative position (see the MapRelativeCoords comment in WorldChrMan.h) -
       // unlike raw x/y/z above, these shouldn't reset when crossing a local map-tile
       // boundary in the open world. computeGain's mapDistance uses mapRelY instead of
-      // raw y for the elevation term, and computeRelativeOffset uses mapRelX/mapRelZ/
-      // mapRelRad instead of raw x/z and yawCos/yawSin for the panning direction term
-      // - see hasMapPosition and computeRelativeOffset in proximity.js. mapRelRad is
-      // this peer's own character facing (not their camera's) - preferred over
-      // yawCos/yawSin because a third-person camera can be spun to face a different
-      // direction than the character actually does, and preferred over oriDeg
-      // because it shares the same underlying struct/coordinate frame as
-      // mapRelX/mapRelZ (see the MapRelativeCoords comment in WorldChrMan.h).
+      // raw y for the elevation term - see hasMapPosition in proximity.js. mapRelX/
+      // mapRelZ/mapRelRad aren't currently consumed (see the note above).
       peer.mapRelY = isFiniteNumber(msg.mapRelY) ? msg.mapRelY : undefined;
       peer.mapRelX = isFiniteNumber(msg.mapRelX) ? msg.mapRelX : undefined;
       peer.mapRelZ = isFiniteNumber(msg.mapRelZ) ? msg.mapRelZ : undefined;

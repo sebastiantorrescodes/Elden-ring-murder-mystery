@@ -602,7 +602,6 @@ export default function App() {
       onVolumes: (volumes) => {
         for (const [peerId, v] of Object.entries(volumes)) {
           meshRef.current?.setGain(peerId, v.gain);
-          meshRef.current?.setDirection(peerId, v.relX, v.relY, v.relZ);
           peerGainsRef.current.set(peerId, v.gain);
         }
         syncPeerRows();

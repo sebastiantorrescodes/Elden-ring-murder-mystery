@@ -98,12 +98,10 @@ export function parseBlockLine(line: string): DllBlockReading | null {
 // comment in WorldChrMan.h) - read off a different offset than the slot=... line's
 // raw ChrIns x/y/z, and (in the open world) shouldn't reset when crossing a local
 // map-tile boundary the way raw x/y/z does (the DLL applies the grid rebase before
-// sending). y feeds proximity.js's elevation term; x/z feed its panning direction
-// term. rad is this client's own character facing (not the camera's - see the
-// "camera" line's yawCos/yawSin) - proximity.js's computeRelativeOffset uses it
-// instead of yawCos/yawSin for the forward/right basis now, since a third-person
-// camera can be spun to face a different direction than the character actually
-// does. map isn't on the wire - nothing downstream consumes it yet.
+// sending). y feeds proximity.js's elevation term. x/z/rad aren't currently
+// consumed server-side (directional/panning audio, which used to use them, was
+// removed) - still sent in case direction is ever revisited. map isn't on the
+// wire at all.
 export interface DllMapRelativeReading {
   x: number;
   y: number;

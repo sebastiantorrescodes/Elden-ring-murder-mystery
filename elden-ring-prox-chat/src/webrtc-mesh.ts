@@ -5,7 +5,6 @@ const ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 
 interface PeerEntry {
   connection: RTCPeerConnection;
-  pannerNode: PannerNode;
   gainNode: GainNode;
   analyser: AnalyserNode;
   audioSource: MediaStreamAudioSourceNode | null;
@@ -48,22 +47,6 @@ export class WebRtcMesh {
     if (outputDeviceId) {
       this.setOutputDevice(outputDeviceId);
     }
-
-    // The listener stays fixed at the origin, facing -Z with +Y up (Web Audio's own
-    // default) for the whole session - the server already rotates each peer's
-    // position into this listener's own facing frame (see computeRelativeOffset),
-    // so there's nothing here that needs to track the local player's real position
-    // or orientation directly.
-    const { listener } = this.audioCtx;
-    listener.positionX.value = 0;
-    listener.positionY.value = 0;
-    listener.positionZ.value = 0;
-    listener.forwardX.value = 0;
-    listener.forwardY.value = 0;
-    listener.forwardZ.value = -1;
-    listener.upX.value = 0;
-    listener.upY.value = 1;
-    listener.upZ.value = 0;
 
     // Tapped straight off the mic, before it's ever sent anywhere - never connected
     // onward to destination, so this can't cause local monitoring/feedback.
@@ -108,7 +91,6 @@ export class WebRtcMesh {
     if (!peer) return;
     peer.connection.close();
     peer.audioSource?.disconnect();
-    peer.pannerNode.disconnect();
     peer.gainNode.disconnect();
     if (peer.pullElement) {
       peer.pullElement.pause();
@@ -145,21 +127,6 @@ export class WebRtcMesh {
     peer.gainNode.gain.linearRampToValueAtTime(value, now + 0.15);
   }
 
-  // relX/Y/Z come from the server's 'volumes' message, already rotated into this
-  // listener's own facing frame (see PeerVolume in signaling-client.ts) - just
-  // hand them to the panner as-is, no rotation needed on this end.
-  setDirection(peerId: PeerId, relX: number, relY: number, relZ: number) {
-    const peer = this.peers.get(peerId);
-    if (!peer) return;
-    const now = this.audioCtx.currentTime;
-    peer.pannerNode.positionX.cancelScheduledValues(now);
-    peer.pannerNode.positionY.cancelScheduledValues(now);
-    peer.pannerNode.positionZ.cancelScheduledValues(now);
-    peer.pannerNode.positionX.linearRampToValueAtTime(relX, now + 0.15);
-    peer.pannerNode.positionY.linearRampToValueAtTime(relY, now + 0.15);
-    peer.pannerNode.positionZ.linearRampToValueAtTime(relZ, now + 0.15);
-  }
-
   // Routes all peer audio (which all converges on this shared audioCtx.destination -
   // see getOrCreatePeer) to a specific output device. This is the modern Audio Output
   // Devices API (AudioContext.prototype.setSinkId) - lib.dom.d.ts doesn't have it yet
@@ -187,26 +154,14 @@ export class WebRtcMesh {
 
     const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
-    // Direction only - distance-based attenuation is disabled (rolloffFactor: 0) so
-    // this never double-attenuates on top of the server's own gain value below.
-    // Starts pointed straight ahead until the first 'volumes' message arrives.
-    const pannerNode = this.audioCtx.createPanner();
-    pannerNode.panningModel = 'HRTF';
-    pannerNode.distanceModel = 'linear';
-    pannerNode.rolloffFactor = 0;
-    pannerNode.positionX.value = 0;
-    pannerNode.positionY.value = 0;
-    pannerNode.positionZ.value = -1;
-
     const gainNode = this.audioCtx.createGain();
     gainNode.gain.value = 1; // full volume until the server's first volumes message says otherwise
     const analyser = this.audioCtx.createAnalyser();
     analyser.fftSize = 256;
-    pannerNode.connect(gainNode);
     gainNode.connect(analyser);
     analyser.connect(this.audioCtx.destination);
 
-    const entry: PeerEntry = { connection, pannerNode, gainNode, analyser, audioSource: null, pullElement: null };
+    const entry: PeerEntry = { connection, gainNode, analyser, audioSource: null, pullElement: null };
     this.peers.set(peerId, entry);
 
     if (this.localStream) {
@@ -228,7 +183,7 @@ export class WebRtcMesh {
       const [remoteStream] = event.streams;
       entry.audioSource?.disconnect(); // renegotiation can refire this - don't leak the old node
       const audioSource = this.audioCtx.createMediaStreamSource(remoteStream);
-      audioSource.connect(pannerNode);
+      audioSource.connect(gainNode);
       entry.audioSource = audioSource;
 
       // Chromium quirk: a remote WebRTC MediaStreamTrack can sit there fully
