@@ -193,12 +193,12 @@ export class SignalingClient {
   // mapId/underground/yawCos/yawSin/blockId/mapX/mapY/hp/oriDeg/mapRelY/mapRelX/
   // mapRelZ/mapRelRad are all optional: an older client or the manual test controls
   // that omit them are treated by the server as "unknown" rather than being
-  // penalized (area/block: trust distance; facing: no directional cue; hp: not
-  // muted). blockId is what the server actually gates proximity on -
+  // penalized (area/block: trust distance; facing: no directional cue).
+  // blockId is what the server actually gates proximity on -
   // mapId/underground/mapX/mapY are kept for other potential uses but don't drive
   // that decision (yet, for mapX/mapY - see the Location comment in
-  // WorldChrMan.h). hp === 0 mutes this peer's mic for everyone, regardless of
-  // distance - see proximity.js's computeGain. mapRelY/mapRelX/mapRelZ (see the
+  // WorldChrMan.h). HP is telemetry only; the server's authoritative round life
+  // state controls whether a listener may hear a Ghost. mapRelY/mapRelX/mapRelZ (see the
   // MapRelativeCoords comment in WorldChrMan.h) are what computeGain's mapDistance
   // (y) and computeRelativeOffset's panning direction (x/z) use instead of raw
   // y/x/z, since they shouldn't reset when crossing a local map-tile boundary the
