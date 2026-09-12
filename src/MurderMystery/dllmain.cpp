@@ -221,6 +221,18 @@ namespace MM
     constexpr int32_t SPEFFECT_IN_ROUNDTABLE =
         500013;
 
+    // Local-only spectator marker. Regulation/EMEVD supply the tested visual
+    // and invulnerability behavior; the DLL owns its lifecycle. Selective
+    // collision and targetability still require separate verified hooks.
+    constexpr int32_t SPEFFECT_GHOST =
+        500014;
+
+    // Allows Common EMEVD to honor 500011 while 500014 is still present. This
+    // is applied only by EndGame; ordinary/startup return requests cannot pull
+    // an active Ghost out of the round.
+    constexpr int32_t SPEFFECT_GHOST_HUB_RETURN_ALLOWED =
+        500015;
+
     // --------------------------------------------------------
 
     enum class Role
@@ -321,6 +333,10 @@ namespace MM
     bool g_volcanoItemCleanupRequested = false;
     bool g_playerDeathReported = false;
     bool g_pendingReturnToHub = false;
+    bool g_isGhost = false;
+    bool g_pendingGhostRespawn = false;
+    int g_ghostSpawnIndex = 0;
+    ULONGLONG g_ghostRespawnDetectedAtMs = 0;
     bool g_itemPointWasActive[10]{};
     bool g_startupLobbyRequested = false;
     bool g_lobbyStateInitialized = false;
@@ -4157,6 +4173,36 @@ namespace MM
         return true;
     }
 
+    bool ApplyLocalGhostState()
+    {
+        const uintptr_t player = GetLocalPlayerIns();
+
+        if (!player)
+        {
+            Log("[GHOST] Local player unavailable; will retry.");
+            return false;
+        }
+
+        // Clear role identity locally so role-gated EMEVD pickups cannot treat
+        // this spectator as a living Innocent/Sheriff/Murderer. The server keeps
+        // the role at death separately for win-condition evaluation.
+        SetLocalRole(Role::None);
+        ClearRoleMagic();
+        UnequipWeaponSlot(SLOT_SECONDARY_RIGHT);
+        UnequipGoodsSlot(SLOT_QUICK_ITEM_1);
+        UnequipGoodsSlot(SLOT_GREAT_RUNE);
+        UnequipGoodsItemEverywhere(MIMIC_VEIL);
+
+        if (!ApplySpEffectToChrIns(player, SPEFFECT_GHOST))
+        {
+            Log("[ERROR] Failed to apply Ghost SpEffect 500014.");
+            return false;
+        }
+
+        Log("[GHOST] Spectator state applied.");
+        return true;
+    }
+
     bool ExecuteCommand(MMCommand command)
     {
         switch (command)
@@ -4346,6 +4392,10 @@ namespace MM
                 player,
                 SPEFFECT_VOLCANO_LOADED);
 
+            RemoveSpEffectFromChrIns(
+                player,
+                SPEFFECT_GHOST);
+
             g_activeRoundId =
                 roundParam->second;
 
@@ -4355,6 +4405,14 @@ namespace MM
             g_playerDeathReported = false;
             g_sheriffHitPulseHandled = false;
             g_pendingReturnToHub = false;
+            g_isGhost = false;
+            g_pendingGhostRespawn = false;
+            g_ghostSpawnIndex = 0;
+            g_ghostRespawnDetectedAtMs = 0;
+
+            RemoveSpEffectFromChrIns(
+                player,
+                SPEFFECT_GHOST_HUB_RETURN_ALLOWED);
             g_volcanoItemCleanupRequested = false;
             ClearSheriffDropFlags();
 
@@ -4489,6 +4547,52 @@ namespace MM
                 ClearSheriffDropFlags();
                 Log("[SHERIFF] Drop cleared.");
             }
+        }
+        else if (commandName == "EnterGhost")
+        {
+            const auto roundParam = params.find("round");
+            const auto spawnParam = params.find("spawn");
+
+            if (roundParam == params.end() ||
+                spawnParam == params.end() ||
+                roundParam->second != g_activeRoundId ||
+                !g_roundActive)
+            {
+                Log("[NET] Ignoring EnterGhost with invalid/stale round.");
+                return;
+            }
+
+            int spawnIndex = 0;
+
+            try
+            {
+                spawnIndex = std::stoi(spawnParam->second);
+            }
+            catch (...)
+            {
+                Log("[NET] EnterGhost has invalid spawn.");
+                return;
+            }
+
+            if (spawnIndex < 1 || spawnIndex > 11)
+            {
+                Log("[NET] EnterGhost spawn must be 1-11.");
+                return;
+            }
+
+            g_isGhost = true;
+            g_pendingGhostRespawn = true;
+            g_ghostSpawnIndex = spawnIndex;
+            g_ghostRespawnDetectedAtMs = 0;
+
+            // Remove the role immediately if the dying ChrIns is still valid.
+            // The Ghost effect itself is applied after the normal respawn so it
+            // cannot be discarded by Elden Ring's death reconstruction.
+            SetLocalRole(Role::None);
+
+            Log(
+                "[GHOST] Death accepted; waiting for respawn before "
+                "Volcano spawn=" + std::to_string(spawnIndex) + ".");
         }
         else if (commandName == "Commence")
         {
@@ -4674,6 +4778,9 @@ namespace MM
             g_waitingForVolcanoLoad = false;
             g_volcanoLoadReported = false;
             g_sheriffHitPulseHandled = false;
+            g_pendingGhostRespawn = false;
+            g_ghostSpawnIndex = 0;
+            g_ghostRespawnDetectedAtMs = 0;
             ClearSheriffDropFlags();
 
             const uintptr_t player =
@@ -4708,6 +4815,15 @@ namespace MM
             if (shouldReturnToHub)
             {
                 PlayerState localState{};
+
+                // Common EMEVD deliberately ignores 500011 while 500014 is
+                // active unless EndGame supplies this authorization marker.
+                if (player && HasSpEffect(SPEFFECT_GHOST))
+                {
+                    ApplySpEffectToChrIns(
+                        player,
+                        SPEFFECT_GHOST_HUB_RETURN_ALLOWED);
+                }
 
                 if (TryReadPlayerSlot(0, localState) &&
                     localState.alive)
@@ -5206,6 +5322,17 @@ namespace MM
             // returns the player to the lobby.
             if (currentPlayer && !g_startupLobbyRequested)
             {
+                // Recover safely if the previous process ended during a Ghost
+                // round. Startup is not an active round, so stale spectator
+                // state must not block the one-shot lobby return.
+                RemoveSpEffectFromChrIns(
+                    currentPlayer,
+                    SPEFFECT_GHOST);
+
+                RemoveSpEffectFromChrIns(
+                    currentPlayer,
+                    SPEFFECT_GHOST_HUB_RETURN_ALLOWED);
+
                 if (ApplySpEffectToChrIns(
                     currentPlayer,
                     SPEFFECT_RETURN_TO_HUB_REQUEST))
@@ -5220,6 +5347,22 @@ namespace MM
                 const bool inRoundtable =
                     HasSpEffect(SPEFFECT_IN_ROUNDTABLE);
                 const ULONGLONG now = GetTickCount64();
+
+                // Roundtable EMEVD performs the authoritative arrival cleanup.
+                // Mirror it here so DLL-only state cannot remain stuck if the
+                // EMEVD clears the marker between two loop iterations.
+                if (inRoundtable && !g_roundActive)
+                {
+                    RemoveSpEffectFromChrIns(
+                        currentPlayer,
+                        SPEFFECT_GHOST);
+
+                    RemoveSpEffectFromChrIns(
+                        currentPlayer,
+                        SPEFFECT_GHOST_HUB_RETURN_ALLOWED);
+
+                    g_isGhost = false;
+                }
 
                 // Repeat the state periodically because the Electron TCP bridge
                 // may connect after the DLL made its first observation.
@@ -5355,9 +5498,6 @@ namespace MM
                         }
                     }
 
-                    // PlayerLoaded only waits for this client's cleanup EMEVD
-                    // to consume its local 500050 request.
-                    //
                     // Do not gate a local load acknowledgement on network-connected
                     // item flags. Their replicated state can arrive at different
                     // times on different clients.
@@ -5422,8 +5562,14 @@ namespace MM
             // &1 catches only the key-down transition,
             // rather than executing every frame it is held.
 
+            // A death can reconstruct the ChrIns with a DontDeleteOnDead role
+            // effect for one or more frames. EnterGhost is authoritative: do
+            // not let that transient effect re-run a living-role loadout after
+            // the spectator state has been accepted.
             const Role currentRole =
-                GetCurrentRole();
+                g_isGhost
+                    ? Role::None
+                    : GetCurrentRole();
 
             if (currentRole != lastAppliedLoadoutRole)
             {
@@ -5960,7 +6106,7 @@ namespace MM
                 mmTalismanWasEquipped = false;
             }
 
-            if (g_roundActive)
+            if (g_roundActive && !g_isGhost)
             {
                 for (int spawnIndex = 1;
                     spawnIndex <= 10;
@@ -6012,6 +6158,43 @@ namespace MM
             if (TryReadPlayerSlot(0, localPlayer))
             {
                 const ULONGLONG deathCheckNow = GetTickCount64();
+
+                // With Volcano still active, Elden Ring/Seamless can rebuild
+                // the player at the map's natural fallback spawn. Let the new
+                // ChrIns settle briefly, then apply Ghost state in-place. This
+                // path deliberately does not write a persistent respawn point.
+                if (g_roundActive &&
+                    g_isGhost &&
+                    g_pendingGhostRespawn &&
+                    localPlayer.alive)
+                {
+                    if (HasSpEffect(SPEFFECT_IN_ROUNDTABLE))
+                    {
+                        // This installation fell back to Roundtable instead of
+                        // rebuilding in Volcano. Do not hide that result with a
+                        // second automatic warp.
+                        g_pendingGhostRespawn = false;
+                        g_ghostRespawnDetectedAtMs = 0;
+                        Log(
+                            "[GHOST] Respawn landed in Roundtable; "
+                            "spectator conversion cancelled.");
+                    }
+                    else if (g_ghostRespawnDetectedAtMs == 0)
+                    {
+                        g_ghostRespawnDetectedAtMs = deathCheckNow;
+                        Log("[GHOST] Native Volcano respawn detected; settling.");
+                    }
+                    else if (deathCheckNow - g_ghostRespawnDetectedAtMs >= 750 &&
+                        ApplyLocalGhostState())
+                    {
+                        g_pendingGhostRespawn = false;
+                        g_ghostRespawnDetectedAtMs = 0;
+                        Log(
+                            "[GHOST] Volcano spectator conversion completed "
+                            "(round spawn index=" +
+                            std::to_string(g_ghostSpawnIndex) + ").");
+                    }
+                }
 
                 // An EndGame command received during the death animation
                 // defers the Roundtable request until the player is alive.

@@ -54,9 +54,11 @@ function distanceGain(distance) {
 }
 
 function computeGain(self, other) {
-  // A dead player (hp reported as exactly 0 - not undefined/unknown) is muted for
-  // everyone in the room immediately, regardless of distance.
-  if (other.hp === 0) {
+  // Round life state is server-authoritative. Living listeners must not hear
+  // spectators, while spectators can hear both living players and one another.
+  // Do not derive this from HP: a Ghost has positive HP after the game's normal
+  // respawn has completed.
+  if (self.roundAlive === true && other.roundAlive === false) {
     return 0;
   }
   // No raw x/y/z fallback anymore (see hasMapPosition) - a peer without map
