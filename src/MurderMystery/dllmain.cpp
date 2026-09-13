@@ -233,6 +233,11 @@ namespace MM
     constexpr int32_t SPEFFECT_GHOST_HUB_RETURN_ALLOWED =
         500015;
 
+    // The resurrected ChrIns only needs one update tick before spectator
+    // cleanup. A long delay visibly restored the old great rune/loadout before
+    // 500014, its message, and its sound were applied.
+    constexpr ULONGLONG GHOST_RESPAWN_SETTLE_MS = 100;
+
     // --------------------------------------------------------
 
     enum class Role
@@ -335,7 +340,6 @@ namespace MM
     bool g_pendingReturnToHub = false;
     bool g_isGhost = false;
     bool g_pendingGhostRespawn = false;
-    int g_ghostSpawnIndex = 0;
     ULONGLONG g_ghostRespawnDetectedAtMs = 0;
     bool g_itemPointWasActive[10]{};
     bool g_startupLobbyRequested = false;
@@ -4407,7 +4411,6 @@ namespace MM
             g_pendingReturnToHub = false;
             g_isGhost = false;
             g_pendingGhostRespawn = false;
-            g_ghostSpawnIndex = 0;
             g_ghostRespawnDetectedAtMs = 0;
 
             RemoveSpEffectFromChrIns(
@@ -4551,10 +4554,8 @@ namespace MM
         else if (commandName == "EnterGhost")
         {
             const auto roundParam = params.find("round");
-            const auto spawnParam = params.find("spawn");
 
             if (roundParam == params.end() ||
-                spawnParam == params.end() ||
                 roundParam->second != g_activeRoundId ||
                 !g_roundActive)
             {
@@ -4562,27 +4563,8 @@ namespace MM
                 return;
             }
 
-            int spawnIndex = 0;
-
-            try
-            {
-                spawnIndex = std::stoi(spawnParam->second);
-            }
-            catch (...)
-            {
-                Log("[NET] EnterGhost has invalid spawn.");
-                return;
-            }
-
-            if (spawnIndex < 1 || spawnIndex > 11)
-            {
-                Log("[NET] EnterGhost spawn must be 1-11.");
-                return;
-            }
-
             g_isGhost = true;
             g_pendingGhostRespawn = true;
-            g_ghostSpawnIndex = spawnIndex;
             g_ghostRespawnDetectedAtMs = 0;
 
             // Remove the role immediately if the dying ChrIns is still valid.
@@ -4591,8 +4573,7 @@ namespace MM
             SetLocalRole(Role::None);
 
             Log(
-                "[GHOST] Death accepted; waiting for respawn before "
-                "Volcano spawn=" + std::to_string(spawnIndex) + ".");
+                "[GHOST] Death accepted; waiting for native Volcano respawn.");
         }
         else if (commandName == "Commence")
         {
@@ -4779,7 +4760,6 @@ namespace MM
             g_volcanoLoadReported = false;
             g_sheriffHitPulseHandled = false;
             g_pendingGhostRespawn = false;
-            g_ghostSpawnIndex = 0;
             g_ghostRespawnDetectedAtMs = 0;
             ClearSheriffDropFlags();
 
@@ -5351,7 +5331,11 @@ namespace MM
                 // Roundtable EMEVD performs the authoritative arrival cleanup.
                 // Mirror it here so DLL-only state cannot remain stuck if the
                 // EMEVD clears the marker between two loop iterations.
-                if (inRoundtable && !g_roundActive)
+                if (inRoundtable &&
+                    !g_roundActive &&
+                    (g_isGhost ||
+                        HasSpEffect(SPEFFECT_GHOST) ||
+                        HasSpEffect(SPEFFECT_GHOST_HUB_RETURN_ALLOWED)))
                 {
                     RemoveSpEffectFromChrIns(
                         currentPlayer,
@@ -6159,10 +6143,9 @@ namespace MM
             {
                 const ULONGLONG deathCheckNow = GetTickCount64();
 
-                // With Volcano still active, Elden Ring/Seamless can rebuild
-                // the player at the map's natural fallback spawn. Let the new
-                // ChrIns settle briefly, then apply Ghost state in-place. This
-                // path deliberately does not write a persistent respawn point.
+                // The active-round Volcano checkpoint rebuilds the player at
+                // the map's Player point (entity 0), which is inside the box.
+                // Let the new ChrIns settle before applying spectator state.
                 if (g_roundActive &&
                     g_isGhost &&
                     g_pendingGhostRespawn &&
@@ -6170,29 +6153,24 @@ namespace MM
                 {
                     if (HasSpEffect(SPEFFECT_IN_ROUNDTABLE))
                     {
-                        // This installation fell back to Roundtable instead of
-                        // rebuilding in Volcano. Do not hide that result with a
-                        // second automatic warp.
-                        g_pendingGhostRespawn = false;
+                        // Deliberately do not bounce back to Volcano: that
+                        // would reintroduce a second loading screen.
                         g_ghostRespawnDetectedAtMs = 0;
-                        Log(
-                            "[GHOST] Respawn landed in Roundtable; "
-                            "spectator conversion cancelled.");
                     }
                     else if (g_ghostRespawnDetectedAtMs == 0)
                     {
                         g_ghostRespawnDetectedAtMs = deathCheckNow;
-                        Log("[GHOST] Native Volcano respawn detected; settling.");
+                        Log(
+                            "[GHOST] Respawned player is alive; waiting for "
+                            "Roundtable/Volcano classification.");
                     }
-                    else if (deathCheckNow - g_ghostRespawnDetectedAtMs >= 750 &&
+                    else if (deathCheckNow - g_ghostRespawnDetectedAtMs >=
+                            GHOST_RESPAWN_SETTLE_MS &&
                         ApplyLocalGhostState())
                     {
                         g_pendingGhostRespawn = false;
                         g_ghostRespawnDetectedAtMs = 0;
-                        Log(
-                            "[GHOST] Volcano spectator conversion completed "
-                            "(round spawn index=" +
-                            std::to_string(g_ghostSpawnIndex) + ").");
+                        Log("[GHOST] Spectator-box conversion completed.");
                     }
                 }
 

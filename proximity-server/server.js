@@ -1122,20 +1122,12 @@ wss.on('connection', (ws) => {
         const victimPeer = room.get(victimId);
         if (victimPeer) victimPeer.roundAlive = false;
 
-        let ghostSpawn = null;
-
         // A Murderer death ends the round, so it must never start the spectator
         // respawn pipeline. Only Innocents and Sheriffs become Ghosts.
         if (victimRole === 'Innocent' || victimRole === 'Sheriff') {
           round.ghostByPlayerId.set(victimId, true);
-          // The Roundtable start-warp EMEVD stores this same Volcano point as
-          // the native respawn point. Reuse it here for diagnostics/protocol
-          // consistency; no Roundtable -> Volcano bounce is performed on death.
-          ghostSpawn = round.spawnByPlayerId.get(victimId);
-
           sendCommand(room, victimId, 'EnterGhost', {
             round: round.id,
-            spawn: String(ghostSpawn),
           });
         }
 
@@ -1146,7 +1138,7 @@ wss.on('connection', (ws) => {
         log(
           `[game-event] PlayerDied "${victimId}" ` +
           `role=${victimRole || 'Unknown'} ` +
-          `ghostSpawn=${ghostSpawn ?? 'none'} ` +
+          `spectator=${round.ghostByPlayerId.get(victimId) === true} ` +
           `round="${round.id}"`,
         );
 
