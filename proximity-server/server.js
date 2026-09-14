@@ -938,6 +938,7 @@ wss.on('connection', (ws) => {
         id: roundId,
         state: 'LOADING',
         participantIds,
+        useSoloRoleTest,
         spawnByPlayerId,
         roleByPlayerId,
         loadedPlayerIds: new Set(),
@@ -1002,7 +1003,8 @@ wss.on('connection', (ws) => {
           msg.name !== 'PlayerDied' &&
           msg.name !== 'ItemPickedUp' &&
           msg.name !== 'SheriffKitPickedUp' &&
-          msg.name !== 'SheriffHit') ||
+          msg.name !== 'SheriffHit' &&
+          msg.name !== 'TestFakeSheriffDeath') ||
         !isValidIdString(msg.roundId)
       ) {
         return;
@@ -1020,6 +1022,33 @@ wss.on('connection', (ws) => {
           `[game-event] ignored stale/invalid event ` +
           `from "${peerId}"`,
         );
+        return;
+      }
+
+      if (msg.name === 'TestFakeSheriffDeath') {
+        const fakeSheriffId = SOLO_FAKE_PLAYER_IDS.Sheriff;
+        if (
+          !round.useSoloRoleTest ||
+          round.participantIds.length !== 1 ||
+          room.size !== 1 ||
+          roomHosts.get(roomId) !== peerId ||
+          round.state !== 'ACTIVE' ||
+          round.roundEnded ||
+          round.aliveByPlayerId.get(peerId) !== true ||
+          round.roleByPlayerId.get(peerId) !== 'Innocent' ||
+          round.roleByPlayerId.get(fakeSheriffId) !== 'Sheriff' ||
+          round.aliveByPlayerId.get(fakeSheriffId) !== true ||
+          round.sheriffDropIndex !== null
+        ) {
+          log(`[test] rejected fake Sheriff death from "${peerId}" round="${round.id}"`);
+          return;
+        }
+
+        // Use the normal drop and victory checks. The fake player has no DLL
+        // to respawn; only its authoritative life state needs updating.
+        round.aliveByPlayerId.set(fakeSheriffId, false);
+        spawnSheriffDrop(room, round, 'F5 solo test: fake Sheriff died');
+        evaluateRoundState(roomId);
         return;
       }
 
