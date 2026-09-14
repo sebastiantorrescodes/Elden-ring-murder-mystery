@@ -1995,24 +1995,36 @@ namespace MM
         return found;
     }
 
+    uint32_t GetItemPermissionFlag(int spawnIndex)
+    {
+        return spawnIndex >= 1 && spawnIndex <= 10
+            ? 16009760u + static_cast<uint32_t>(spawnIndex) : 0;
+    }
+
     bool RequestItemSpawn(int spawnIndex)
     {
+        const uint32_t permissionFlag = GetItemPermissionFlag(spawnIndex);
+        if (!permissionFlag || !SetEventFlag(permissionFlag, true))
+            return false;
+
+        // Local permission is separate from the replicated active flag. Old
+        // network state alone must never make a pickup visible this round.
+        bool requested = false;
         switch (spawnIndex)
         {
-        case 1: return SetEventFlag(16009961, true);
-        case 2: return SetEventFlag(16009962, true);
-        case 3: return SetEventFlag(16009963, true);
-        case 4: return SetEventFlag(16009964, true);
-        case 5: return SetEventFlag(16009965, true);
-        case 6: return SetEventFlag(16009966, true);
-        case 7: return SetEventFlag(16009967, true);
-        case 8: return SetEventFlag(16009968, true);
-        case 9: return SetEventFlag(16009969, true);
-        case 10: return SetEventFlag(16009971, true);
-
-        default:
-            return false;
+        case 1: requested = SetEventFlag(16009961, true); break;
+        case 2: requested = SetEventFlag(16009962, true); break;
+        case 3: requested = SetEventFlag(16009963, true); break;
+        case 4: requested = SetEventFlag(16009964, true); break;
+        case 5: requested = SetEventFlag(16009965, true); break;
+        case 6: requested = SetEventFlag(16009966, true); break;
+        case 7: requested = SetEventFlag(16009967, true); break;
+        case 8: requested = SetEventFlag(16009968, true); break;
+        case 9: requested = SetEventFlag(16009969, true); break;
+        case 10: requested = SetEventFlag(16009971, true); break;
         }
+        if (!requested) SetEventFlag(permissionFlag, false);
+        return requested;
     }
 
     uint32_t GetItemActiveFlag(
@@ -2057,9 +2069,15 @@ namespace MM
 
         for (int index = 0; index < SHERIFF_DROP_POINT_COUNT; ++index)
         {
-            success = SetEventFlag(
+            const bool cleared = SetEventFlag(
                 SHERIFF_DROP_FLAGS[index],
-                false) && success;
+                false);
+            if (!cleared)
+            {
+                Log("[ERROR] Failed to clear Sheriff drop flag " +
+                    std::to_string(SHERIFF_DROP_FLAGS[index]) + ".");
+            }
+            success = cleared && success;
         }
 
         return success;
@@ -2069,10 +2087,16 @@ namespace MM
     {
         if (spawnIndex < 1 || spawnIndex > SHERIFF_DROP_POINT_COUNT)
         {
+            Log("[ERROR] Sheriff drop point must be 1-13: " +
+                std::to_string(spawnIndex));
             return false;
         }
 
-        ClearSheriffDropFlags();
+        if (!ClearSheriffDropFlags())
+        {
+            Log("[ERROR] Sheriff drop activation aborted: flag cleanup failed.");
+            return false;
+        }
 
         // Give every Restart EMEVD slot time to observe its flag OFF and remove
         // the previous VFX before a (possibly identical) point is activated.
@@ -2080,9 +2104,28 @@ namespace MM
         // one game-frame and make the drop appear not to move.
         Sleep(50);
 
-        return SetEventFlag(
-            SHERIFF_DROP_FLAGS[spawnIndex - 1],
-            true);
+        const uint32_t activeFlag = SHERIFF_DROP_FLAGS[spawnIndex - 1];
+        if (!SetEventFlag(activeFlag, true))
+        {
+            Log("[ERROR] Failed to activate Sheriff drop flag " +
+                std::to_string(activeFlag) + ".");
+            return false;
+        }
+
+        bool active = false;
+        if (!GetEventFlag(activeFlag, active) || !active)
+        {
+            Log("[ERROR] Sheriff drop flag readback failed: " +
+                std::to_string(activeFlag) + ".");
+            return false;
+        }
+
+        // This confirms only the DLL's flag write, not EMEVD execution or VFX.
+        Log("[SHERIFF] Flag write verified: point=" +
+            std::to_string(spawnIndex) + " flag=" +
+            std::to_string(activeFlag) + " asset=" +
+            std::to_string(17001809 + spawnIndex) + ".");
+        return true;
     }
 
     // --------------------------------------------------------
@@ -3031,6 +3074,12 @@ namespace MM
             return false;
 
         Log("[ROUND] Cleanup requested.");
+
+        for (int index = 1; index <= 10; ++index)
+        {
+            SetEventFlag(GetItemPermissionFlag(index), false);
+            g_itemPointWasActive[index - 1] = false;
+        }
 
         // Immediate local state cleanup.
         UnequipMMTalismanEverywhere();
@@ -4511,6 +4560,7 @@ namespace MM
         }
         else if (commandName == "SheriffDrop")
         {
+            Log("[SHERIFF] Received " + line);
             const auto roundParam = params.find("round");
             const auto spawnParam = params.find("spawn");
 
@@ -4536,8 +4586,13 @@ namespace MM
 
             if (RequestSheriffDrop(spawnIndex))
             {
-                Log("[SHERIFF] Drop activated at point " +
+                Log("[SHERIFF] Drop flag activated at point " +
                     std::to_string(spawnIndex) + ".");
+            }
+            else
+            {
+                Log("[ERROR] SheriffDrop command failed for round=" +
+                    g_activeRoundId + ".");
             }
         }
         else if (commandName == "SheriffDropClear")
@@ -5855,11 +5910,12 @@ namespace MM
                 const int spawnIndex =
                     1 + (rand() % SHERIFF_DROP_POINT_COUNT);
 
-                RequestSheriffDrop(spawnIndex);
-
+                const bool activated = RequestSheriffDrop(spawnIndex);
                 Log(
-                    "[TEST] F1 -> Sheriff kit pickup spawned at point " +
-                    std::to_string(spawnIndex) + ".");
+                    "[TEST] F1 -> Sheriff drop point=" +
+                    std::to_string(spawnIndex) +
+                    (activated ? " flag activated; check in-game VFX."
+                               : " FAILED; see flag errors above."));
             }
 
             if (WasKeyPressed(VK_F2))
@@ -5875,6 +5931,26 @@ namespace MM
             if (WasKeyPressed(VK_F4))
             {
                 ExecuteCommand(MMCommand::SetMurderer);
+            }
+
+            // F5 uses the server's drop state so pickup can grant the role.
+            // The server accepts this only in an active solo Innocent test.
+            if (WasKeyPressed(VK_F5))
+            {
+                if (!g_roundActive || g_activeRoundId.empty() ||
+                    g_isGhost || GetCurrentRole() != Role::Innocent)
+                {
+                    Log("[TEST] F5 requires an active round as a living Innocent.");
+                }
+                else if (mmTcpClient.sendLine(
+                    "event=TestFakeSheriffDeath round=" + g_activeRoundId))
+                {
+                    Log("[TEST] F5 -> fake Sheriff death requested; awaiting server drop.");
+                }
+                else
+                {
+                    Log("[ERROR] F5 could not send fake Sheriff death request.");
+                }
             }
 
             // F9 = return to Roundtable
@@ -6101,15 +6177,17 @@ namespace MM
                             spawnIndex);
 
                     bool isActive = false;
+                    bool permitted = false;
 
                     if (!GetEventFlag(
                         activeFlag,
-                        isActive))
+                        isActive) || !GetEventFlag(
+                            GetItemPermissionFlag(spawnIndex), permitted))
                     {
                         continue;
                     }
 
-                    if (isActive)
+                    if (isActive && permitted)
                     {
                         g_itemPointWasActive[
                             spawnIndex - 1] = true;

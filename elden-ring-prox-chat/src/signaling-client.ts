@@ -282,7 +282,8 @@ export class SignalingClient {
     | 'PlayerDied'
     | 'ItemPickedUp'
     | 'SheriffKitPickedUp'
-    | 'SheriffHit',
+    | 'SheriffHit'
+    | 'TestFakeSheriffDeath',
     roundId: string,
     index?: number,
     cause?: 'Sheriff' | 'Other',
