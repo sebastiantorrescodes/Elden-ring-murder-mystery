@@ -54,12 +54,14 @@ function distanceGain(distance) {
 }
 
 function computeGain(self, other) {
-  // Round life state is server-authoritative. Living listeners must not hear
-  // spectators, while spectators can hear both living players and one another.
+  // Round life state is server-authoritative. Dead players share a separate
+  // conversation, including while respawning or waiting in the queue room.
   // Do not derive this from HP: a Ghost has positive HP after the game's normal
   // respawn has completed.
-  if (self.roundAlive === true && other.roundAlive === false) {
-    return 0;
+  const selfDead = self.roundAlive === false;
+  const otherDead = other.roundAlive === false;
+  if (selfDead || otherDead) {
+    return selfDead && otherDead ? 1 : 0;
   }
   // No raw x/y/z fallback anymore (see hasMapPosition) - a peer without map
   // coordinates yet (just joined, older client, mock-client.js) has no distance

@@ -136,7 +136,7 @@ function makeInitialPeerState(ws, displayName) {
     gameConnected: false,
     micMuted: false,
     // undefined outside a round; true for a living participant and false for a
-    // Ghost spectator. This is used only for the directional voice matrix.
+    // Ghost spectator. This separates living and dead voice conversations.
     roundAlive: undefined,
     x: undefined,
     y: undefined,
@@ -1121,8 +1121,8 @@ wss.on('connection', (ws) => {
           });
         }
 
-        // Recalculate immediately so living clients stop hearing the victim as
-        // soon as the authoritative death event is accepted.
+        // Recalculate immediately to separate the victim's voice conversation
+        // from living players as soon as the death event is accepted.
         broadcastVolumes(room);
 
         log(
