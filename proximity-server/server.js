@@ -44,6 +44,17 @@ const HUB_RETURN_GRACE_MS = 5_000;
 const ITEM_SPAWN_INTERVAL_MS = 31_313;
 const ITEM_SPAWN_POINT_COUNT = 10;
 const SHERIFF_DROP_POINT_COUNT = 13;
+// Diagnostic override: 0/unset restores random selection. All drop causes use
+// the same selection so the observer can wait at a known point before death.
+const requestedSheriffDropPoint = Number(process.env.MM_SHERIFF_DROP_POINT || 0);
+if (!Number.isInteger(requestedSheriffDropPoint) ||
+    requestedSheriffDropPoint < 0 || requestedSheriffDropPoint > SHERIFF_DROP_POINT_COUNT) {
+  throw new Error('MM_SHERIFF_DROP_POINT must be 0 (random) or an integer from 1 to 13');
+}
+const FIXED_SHERIFF_DROP_POINT = requestedSheriffDropPoint;
+if (FIXED_SHERIFF_DROP_POINT) {
+  log(`[test] Sheriff drops fixed at point=${FIXED_SHERIFF_DROP_POINT}`);
+}
 
 // Prefixes every server log with a sortable UTC timestamp so lines can be
 // correlated with client-side logs / crash reports without guessing at
@@ -494,7 +505,7 @@ function spawnRoundItem(
 
 function spawnSheriffDrop(room, round, reason) {
   const spawnIndex =
-    1 + crypto.randomInt(SHERIFF_DROP_POINT_COUNT);
+    FIXED_SHERIFF_DROP_POINT || 1 + crypto.randomInt(SHERIFF_DROP_POINT_COUNT);
 
   round.sheriffDropIndex = spawnIndex;
 
@@ -506,9 +517,28 @@ function spawnSheriffDrop(room, round, reason) {
   }
 
   log(
-    `[sheriff] drop=${spawnIndex} reason="${reason}" ` +
+    `[sheriff] drop=${spawnIndex} selection=${FIXED_SHERIFF_DROP_POINT ? 'fixed' : 'random'} reason="${reason}" ` +
     `round="${round.id}"`,
   );
+}
+
+function livingNonMurderers(round) {
+  return [...round.roleByPlayerId.entries()].filter(([id, role]) =>
+    (role === 'Innocent' || role === 'Sheriff') &&
+    round.aliveByPlayerId.get(id) === true);
+}
+
+function updateSurvivorRespawns(room, round) {
+  const survivors = livingNonMurderers(round);
+  // Arm the destination while the last survivor is still alive, before the
+  // game commits their death reload. Include fake roles when counting.
+  for (const [id] of survivors) {
+    if (!round.participantIds.includes(id)) continue;
+    sendCommand(room, id, 'SetDeathRespawn', {
+      round: round.id,
+      destination: survivors.length === 1 ? 'Roundtable' : 'Volcano',
+    });
+  }
 }
 
 function evaluateRoundState(roomId) {
@@ -1047,6 +1077,7 @@ wss.on('connection', (ws) => {
         // Use the normal drop and victory checks. The fake player has no DLL
         // to respawn; only its authoritative life state needs updating.
         round.aliveByPlayerId.set(fakeSheriffId, false);
+        updateSurvivorRespawns(room, round);
         spawnSheriffDrop(room, round, 'F5 solo test: fake Sheriff died');
         evaluateRoundState(roomId);
         return;
@@ -1140,6 +1171,24 @@ wss.on('connection', (ws) => {
 
         const victimPeer = room.get(victimId);
         if (victimPeer) victimPeer.roundAlive = false;
+
+        const finalNonMurderer =
+          (victimRole === 'Innocent' || victimRole === 'Sheriff') &&
+          livingNonMurderers(round).length === 0;
+
+        updateSurvivorRespawns(room, round);
+
+        if (finalNonMurderer) {
+          // Reaffirm the destination immediately, without entering spectator
+          // state or waiting for the result banner/EndGame timers.
+          sendCommand(room, victimId, 'SetDeathRespawn', {
+            round: round.id, destination: 'Roundtable',
+          });
+          broadcastVolumes(room);
+          log(`[game-event] PlayerDied "${victimId}" role=${victimRole} spectator=false finalSurvivor=true round="${round.id}"`);
+          evaluateRoundState(roomId);
+          return;
+        }
 
         // A Murderer death ends the round, so it must never start the spectator
         // respawn pipeline. Only Innocents and Sheriffs become Ghosts.
@@ -1300,6 +1349,8 @@ wss.on('connection', (ws) => {
           },
         );
       }
+
+      updateSurvivorRespawns(room, round);
 
       // Then request the Commence banner.
       for (const id of round.participantIds) {

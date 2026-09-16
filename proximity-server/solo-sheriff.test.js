@@ -7,13 +7,13 @@ const { readFileSync } = require('node:fs');
 const vm = require('node:vm');
 
 // Exercise the real message handler with an in-memory transport and inert timers.
-function setup() {
+function setup(env = {}) {
   const transport = new EventEmitter();
   const context = vm.createContext({
     require: (name) => name === 'ws'
       ? { WebSocketServer: class { constructor() { return transport; } } }
       : require(name),
-    process: { env: {} },
+    process: { env },
     console: { log() {} },
     setTimeout: () => 1, clearTimeout() {},
     setInterval: () => 1, clearInterval() {},
@@ -40,6 +40,7 @@ function setup() {
       ['tester', true], ['__test_fake_sheriff__', true],
       ['__test_fake_murderer__', true],
     ]),
+    ghostByPlayerId: new Map(),
   };
   context.state.roomRounds.set(roomId, round);
   messages.length = 0;
@@ -53,6 +54,7 @@ test('F5 registers a drop and normal pickup promotes the solo Innocent once', ()
   const { round, messages, event } = setup();
   event('TestFakeSheriffDeath');
   assert.equal(round.aliveByPlayerId.get('__test_fake_sheriff__'), false);
+  assert.ok(messages.some(m => m.name === 'SetDeathRespawn' && m.params.destination === 'Roundtable'));
   assert.equal(round.state, 'ACTIVE');
   assert.ok(round.sheriffDropIndex >= 1 && round.sheriffDropIndex <= 13);
   const drop = messages.find((msg) => msg.name === 'SheriffDrop');
@@ -98,4 +100,70 @@ test('F5 rejects a stale round ID', () => {
   const { event, messages } = setup();
   event('TestFakeSheriffDeath', 'previous-round');
   assert.equal(messages.length, 0);
+});
+
+test('fixed point applies to actual Sheriff death and is broadcast to every participant', () => {
+  const { round, messages, room, event } = setup({ MM_SHERIFF_DROP_POINT: '1' });
+  round.roleByPlayerId.set('tester', 'Sheriff');
+  round.participantIds.push('observer');
+  round.roleByPlayerId.set('observer', 'Innocent');
+  round.aliveByPlayerId.set('observer', true);
+  const observerMessages = [];
+  room.set('observer', {
+    ws: { readyState: 1, OPEN: 1, send: s => observerMessages.push(JSON.parse(s)) },
+  });
+  event('PlayerDied');
+  assert.equal(round.sheriffDropIndex, 1);
+  for (const received of [messages, observerMessages]) {
+    assert.equal(received.find(m => m.name === 'SheriffDrop').params.spawn, '1');
+  }
+});
+
+test('fixed point applies to solo test drops', () => {
+  const { round, event } = setup({ MM_SHERIFF_DROP_POINT: '13' });
+  event('TestFakeSheriffDeath');
+  assert.equal(round.sheriffDropIndex, 13);
+});
+
+test('zero restores random selection', () => {
+  const { round, event } = setup({ MM_SHERIFF_DROP_POINT: '0' });
+  event('TestFakeSheriffDeath');
+  assert.ok(round.sheriffDropIndex >= 1 && round.sheriffDropIndex <= 13);
+});
+
+for (const value of ['-1', '14', '1.5', 'invalid']) {
+  test(`invalid fixed drop setting ${value} fails explicitly`, () => {
+    assert.throws(() => setup({ MM_SHERIFF_DROP_POINT: value }), /MM_SHERIFF_DROP_POINT/);
+  });
+}
+
+for (const role of ['Innocent', 'Sheriff']) {
+  test(`last ${role} death ends the round without spectator conversion or a kit drop`, () => {
+    const { round, messages, event } = setup();
+    round.roleByPlayerId.set('tester', role);
+    round.aliveByPlayerId.set('__test_fake_sheriff__', false);
+    event('PlayerDied');
+    assert.equal(round.state, 'ENDING');
+    assert.equal(round.roundEnded, true);
+    assert.notEqual(round.ghostByPlayerId.get('tester'), true);
+    assert.ok(messages.some(m => m.name === 'SetDeathRespawn' && m.params.destination === 'Roundtable'));
+    assert.ok(!messages.some(m => m.name === 'EnterGhost' || m.name === 'SheriffDrop'));
+    const count = messages.length;
+    event('PlayerDied');
+    assert.equal(messages.length, count);
+  });
+}
+
+test('a non-final death still enters spectator mode and pre-arms the remaining real survivor', () => {
+  const { round, messages, room, event } = setup();
+  round.participantIds.push('__test_fake_sheriff__');
+  const survivorMessages = [];
+  room.set('__test_fake_sheriff__', {
+    ws: { readyState: 1, OPEN: 1, send: s => survivorMessages.push(JSON.parse(s)) },
+  });
+  event('PlayerDied');
+  assert.equal(round.state, 'ACTIVE');
+  assert.equal(round.ghostByPlayerId.get('tester'), true);
+  assert.ok(messages.some(m => m.name === 'EnterGhost'));
+  assert.ok(survivorMessages.some(m => m.name === 'SetDeathRespawn' && m.params.destination === 'Roundtable'));
 });

@@ -2083,6 +2083,64 @@ namespace MM
         return success;
     }
 
+    void LogSheriffDropFlagChanges()
+    {
+        // Read-only monitoring: do not repair/reassert flags here. We need to
+        // distinguish an external reset from a pickup or DLL cleanup.
+        static ULONGLONG lastPoll = 0;
+        static bool known[SHERIFF_DROP_POINT_COUNT] = {};
+        static bool previous[SHERIFF_DROP_POINT_COUNT] = {};
+        const ULONGLONG now = GetTickCount64();
+        if (now - lastPoll < 250)
+            return;
+        lastPoll = now;
+        for (int i = 0; i < SHERIFF_DROP_POINT_COUNT; ++i)
+        {
+            bool active = false;
+            if (!GetEventFlag(SHERIFF_DROP_FLAGS[i], active))
+            {
+                known[i] = false;
+                continue;
+            }
+            if (!known[i] || previous[i] != active)
+            {
+                Log("[SHERIFF WATCH] t=" + std::to_string(now) +
+                    " point=" + std::to_string(i + 1) +
+                    " flag=" + std::to_string(SHERIFF_DROP_FLAGS[i]) +
+                    " state=" + (active ? "ON" : "OFF") +
+                    (known[i] ? " changed" : " initial"));
+            }
+            known[i] = true;
+            previous[i] = active;
+        }
+        static bool diagnosticKnown[54] = {};
+        static bool diagnosticPrevious[54] = {};
+        for (int i = 0; i < 54; ++i)
+        {
+            const uint32_t bases[] = {16009640u, 16009660u, 16009680u, 16009700u};
+            const char* reasons[] = {"create-call-completed", "deleted-flag-off",
+                "restart-ineligible", "local-claim"};
+            const uint32_t flag = i < 52 ? bases[i / 13] + i % 13 : 16009592u + i - 52;
+            bool active = false;
+            if (!GetEventFlag(flag, active))
+            {
+                diagnosticKnown[i] = false;
+                continue;
+            }
+            if (active && (!diagnosticKnown[i] || !diagnosticPrevious[i]))
+            {
+                const std::string reason = i < 52 ? reasons[i / 13] :
+                    (i == 52 ? "map-startup-cleanup" : "round-cleanup");
+                Log("[SHERIFF EMEVD] t=" + std::to_string(now) +
+                    " reason=" + reason + " point=" +
+                    std::to_string(i < 52 ? i % 13 + 1 : 0) +
+                    " flag=" + std::to_string(flag));
+            }
+            diagnosticKnown[i] = true;
+            diagnosticPrevious[i] = active;
+        }
+    }
+
     bool RequestSheriffDrop(int spawnIndex)
     {
         if (spawnIndex < 1 || spawnIndex > SHERIFF_DROP_POINT_COUNT)
@@ -2091,6 +2149,15 @@ namespace MM
                 std::to_string(spawnIndex));
             return false;
         }
+
+        // Latch checkpoints until the next drop so a short-lived event path
+        // remains observable. The watcher itself never changes game state.
+        for (uint32_t base : {16009640u, 16009660u, 16009680u, 16009700u})
+            for (uint32_t i = 0; i < 13; ++i)
+                SetEventFlag(base + i, false);
+        SetEventFlag(16009592u, false);
+        SetEventFlag(16009593u, false);
+        LogSheriffDropFlagChanges();
 
         if (!ClearSheriffDropFlags())
         {
@@ -4452,6 +4519,8 @@ namespace MM
             g_activeRoundId =
                 roundParam->second;
 
+            SetEventFlag(16009580u, false);
+
             g_waitingForVolcanoLoad = true;
             g_volcanoLoadReported = false;
             g_roundActive = false;
@@ -4605,6 +4674,31 @@ namespace MM
                 ClearSheriffDropFlags();
                 Log("[SHERIFF] Drop cleared.");
             }
+        }
+        else if (commandName == "SetDeathRespawn")
+        {
+            const auto roundParam = params.find("round");
+            const auto destination = params.find("destination");
+            if (roundParam == params.end() || roundParam->second != g_activeRoundId ||
+                destination == params.end() ||
+                (destination->second != "Roundtable" && destination->second != "Volcano"))
+            {
+                Log("[NET] Ignoring invalid/stale SetDeathRespawn.");
+                return;
+            }
+            // The Volcano event owns the native respawn-point instruction.
+            const bool hub = destination->second == "Roundtable";
+            if (!SetEventFlag(16009580u, hub))
+            {
+                Log("[ERROR] Could not request death respawn destination.");
+                return;
+            }
+            if (hub)
+            {
+                g_pendingGhostRespawn = false;
+                g_ghostRespawnDetectedAtMs = 0;
+            }
+            Log("[ROUND] Death respawn requested: " + destination->second + ".");
         }
         else if (commandName == "EnterGhost")
         {
@@ -5351,6 +5445,8 @@ namespace MM
 
             const uintptr_t currentPlayer =
                 GetLocalPlayerIns();
+
+            LogSheriffDropFlagChanges();
 
             // The global Common EMEVD consumes 500011 from any map. Request it
             // once per DLL lifetime so launching a save outside Roundtable first
