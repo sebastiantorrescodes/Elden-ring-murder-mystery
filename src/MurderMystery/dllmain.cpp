@@ -2003,6 +2003,8 @@ namespace MM
 
     bool RequestItemSpawn(int spawnIndex)
     {
+        if (spawnIndex >= 1 && spawnIndex <= 10)
+            SetEventFlag(16009779u + spawnIndex, false);
         const uint32_t permissionFlag = GetItemPermissionFlag(spawnIndex);
         if (!permissionFlag || !SetEventFlag(permissionFlag, true))
             return false;
@@ -2094,6 +2096,14 @@ namespace MM
         if (now - lastPoll < 250)
             return;
         lastPoll = now;
+        static int lastRespawnAck = -1;
+        bool respawnAck = false;
+        if (GetEventFlag(16009581u, respawnAck) && lastRespawnAck != int(respawnAck))
+        {
+            lastRespawnAck = int(respawnAck);
+            Log(std::string("[ROUND] EMEVD respawn destination acknowledgment: ") +
+                (respawnAck ? "Roundtable" : "Volcano/default"));
+        }
         for (int i = 0; i < SHERIFF_DROP_POINT_COUNT; ++i)
         {
             bool active = false;
@@ -3145,6 +3155,7 @@ namespace MM
         for (int index = 1; index <= 10; ++index)
         {
             SetEventFlag(GetItemPermissionFlag(index), false);
+            SetEventFlag(16009779u + index, false);
             g_itemPointWasActive[index - 1] = false;
         }
 
@@ -4520,6 +4531,8 @@ namespace MM
                 roundParam->second;
 
             SetEventFlag(16009580u, false);
+            SetEventFlag(16009582u, false);
+            SetEventFlag(16009584u, false);
 
             g_waitingForVolcanoLoad = true;
             g_volcanoLoadReported = false;
@@ -4698,6 +4711,7 @@ namespace MM
                 g_pendingGhostRespawn = false;
                 g_ghostRespawnDetectedAtMs = 0;
             }
+            SetEventFlag(16009582u, true);
             Log("[ROUND] Death respawn requested: " + destination->second + ".");
         }
         else if (commandName == "EnterGhost")
@@ -4779,6 +4793,18 @@ namespace MM
                 Log(
                     "[ERROR] Failed to request local Commence banner.");
             }
+        }
+        else if (commandName == "ClearItem")
+        {
+            const auto round = params.find("round");
+            const auto index = params.find("index");
+            if (round == params.end() || round->second != g_activeRoundId || index == params.end()) return;
+            int point = 0;
+            try { point = std::stoi(index->second); } catch (...) { return; }
+            if (point < 1 || point > 10) return;
+            SetEventFlag(GetItemPermissionFlag(point), false);
+            SetEventFlag(GetItemActiveFlag(point), false);
+            Log("[ITEM] Server cleared index=" + std::to_string(point));
         }
         else if (commandName == "SpawnItem")
         {
@@ -4885,6 +4911,10 @@ namespace MM
 
             const uintptr_t player =
                 GetLocalPlayerIns();
+
+            const auto disconnected = params.find("disconnected");
+            if (resultParam->second == "Stalemate" && disconnected != params.end() && disconnected->second == "1")
+                SetEventFlag(16009584u, true);
 
             if (player &&
                 ApplySpEffectToChrIns(
@@ -6268,28 +6298,8 @@ namespace MM
                     spawnIndex <= 10;
                     ++spawnIndex)
                 {
-                    const uint32_t activeFlag =
-                        GetItemActiveFlag(
-                            spawnIndex);
-
-                    bool isActive = false;
-                    bool permitted = false;
-
-                    if (!GetEventFlag(
-                        activeFlag,
-                        isActive) || !GetEventFlag(
-                            GetItemPermissionFlag(spawnIndex), permitted))
-                    {
-                        continue;
-                    }
-
-                    if (isActive && permitted)
-                    {
-                        g_itemPointWasActive[
-                            spawnIndex - 1] = true;
-                    }
-                    else if (g_itemPointWasActive[
-                        spawnIndex - 1])
+                    bool claimed = false;
+                    if (GetEventFlag(16009779u + spawnIndex, claimed) && claimed)
                     {
                         const std::string eventLine =
                             "event=ItemPickedUp round=" +
@@ -6300,8 +6310,7 @@ namespace MM
                         if (mmTcpClient.sendLine(
                             eventLine))
                         {
-                            g_itemPointWasActive[
-                                spawnIndex - 1] = false;
+                            SetEventFlag(16009779u + spawnIndex, false);
 
                             Log(
                                 "[ITEM] Reported pickup index=" +

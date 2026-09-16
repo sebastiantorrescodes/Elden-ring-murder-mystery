@@ -386,6 +386,7 @@ function finishRound(roomId, result, reason) {
         {
           round: round.id,
           result,
+          disconnected: reason === 'participant disconnected' || reason === 'game disconnected' ? '1' : '0',
         },
       );
     }
@@ -790,6 +791,12 @@ wss.on('connection', (ws) => {
       peer.inRoundtable = msg.inRoundtable;
       peer.gameConnected = msg.gameConnected;
 
+      const activeRound = roomRounds.get(roomId);
+      if (!peer.gameConnected && activeRound && !activeRound.roundEnded &&
+          activeRound.participantIds.includes(peerId)) {
+        finishRound(roomId, 'Stalemate', 'game disconnected');
+      }
+
       // Leaving Roundtable always revokes readiness. This also covers a manual
       // warp or disconnect from the map before the host starts the round.
       if ((!peer.inRoundtable || !peer.gameConnected) && peer.ready) {
@@ -1098,6 +1105,9 @@ wss.on('connection', (ws) => {
         // Several clients may observe the shared flag turning OFF
         // and report it. Deleting from a Set is safely idempotent.
         if (round.occupiedItemPoints.delete(msg.index)) {
+          for (const id of round.participantIds) {
+            sendCommand(room, id, 'ClearItem', { round: round.id, index: String(msg.index) });
+          }
           log(
             `[items] picked up index=${msg.index} ` +
             `room="${roomId}" round="${round.id}"`,

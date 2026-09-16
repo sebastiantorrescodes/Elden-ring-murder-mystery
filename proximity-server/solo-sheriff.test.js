@@ -45,7 +45,7 @@ function setup(env = {}) {
   context.state.roomRounds.set(roomId, round);
   messages.length = 0;
   return {
-    round, messages, room: context.state.rooms.get(roomId),
+    round, messages, room: context.state.rooms.get(roomId), send, close: () => ws.emit('close'),
     event: (name, roundId = round.id) => send({ type: 'game-event', name, roundId }),
   };
 }
@@ -100,6 +100,30 @@ test('F5 rejects a stale round ID', () => {
   const { event, messages } = setup();
   event('TestFakeSheriffDeath', 'previous-round');
   assert.equal(messages.length, 0);
+});
+
+test('game disconnect immediately produces Stalemate with disconnect notice', () => {
+  const { round, messages, send } = setup();
+  send({ type: 'lobby-state', inRoundtable: false, gameConnected: false });
+  assert.equal(round.state, 'ENDING');
+  assert.ok(messages.some(m => m.name === 'RoundResult' && m.params.result === 'Stalemate' && m.params.disconnected === '1'));
+});
+
+test('leaving Roundtable while still connected does not end a round', () => {
+  const { round, messages, send } = setup();
+  send({ type: 'lobby-state', inRoundtable: false, gameConnected: true });
+  assert.equal(round.state, 'ACTIVE');
+  assert.ok(!messages.some(m => m.name === 'RoundResult'));
+});
+
+test('app socket close ends the round and notifies the remaining player', () => {
+  const { round, room, close } = setup();
+  const received = [];
+  round.participantIds.push('other');
+  room.set('other', { ws: { readyState: 1, OPEN: 1, send: s => received.push(JSON.parse(s)) } });
+  close();
+  assert.equal(round.state, 'ENDING');
+  assert.ok(received.some(m => m.name === 'RoundResult' && m.params.result === 'Stalemate' && m.params.disconnected === '1'));
 });
 
 test('fixed point applies to actual Sheriff death and is broadcast to every participant', () => {

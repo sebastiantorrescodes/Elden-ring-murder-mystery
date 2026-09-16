@@ -6,7 +6,7 @@ const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname,
   '../src/MurderMystery/events/m16_00_00_00.emevd.dcx.js'), 'utf8');
 
-for (const [id, slots] of [[16009620, 13], [16009631, 1]]) {
+for (const [id, slots] of [[16009620, 13], [16009631, 1], [16009960, 10]]) {
   test(`event ${id} constructor calls supply every parameter`, () => {
     const definition = source.match(new RegExp(`\\$Event\\(${id}, Restart, function\\(([^)]*)\\)`));
     assert.ok(definition);

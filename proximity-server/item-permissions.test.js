@@ -20,7 +20,7 @@ function pickup() {
   const state = { visible: false, interact: false, claims: 0 };
   const restart = Symbol('restart');
   const context = {
-    activeFlag: 1, permissionFlag: 2, assetEntityId: 3, OFF: false,
+    activeFlag: 1, permissionFlag: 2, assetEntityId: 3, claimedFlag: 4, OFF: false, ON: true,
     DisableNetworkSync() {},
     DeleteAssetfollowingSFX() { state.visible = false; },
     CreateAssetfollowingSFX() { state.visible = true; },
@@ -66,6 +66,7 @@ test('a newly authorized pickup appears and consumes its permission on claim', (
   state.interact = true;
   tick();
   assert.equal(state.claims, 1);
+  assert.equal(flags.get(4), true);
   assert.equal(flags.get(2), false);
   assert.equal(flags.get(1), false);
   flags.set(1, true); // late replicated state from the old pickup
@@ -85,17 +86,19 @@ for (const [name, flag] of [['round cleanup', 2], ['another player claiming', 1]
     tick();
     assert.equal(state.visible, false);
     assert.equal(state.claims, 0);
+    assert.notEqual(flags.get(4), true);
     assert.equal(flags.get(2), false);
   });
 }
 
-test('constructor clears all ten local permissions before initializing pickup slots', () => {
+test('map constructor preserves permissions; explicit round cleanup clears them', () => {
   const constructor = source.slice(source.indexOf('$Event(0,'), source.indexOf('$Event(50,'));
-  const firstPickup = constructor.indexOf('$InitializeEvent(0, 16009960,');
+  const cleanup = source.slice(source.indexOf('$Event(16009970,'), source.indexOf('$Event(16009957,'));
   for (let i = 0; i < 10; i++) {
     const clear = constructor.indexOf(`SetEventFlagID(${16009761 + i}, OFF);`);
-    assert.ok(clear >= 0 && clear < firstPickup);
+    assert.equal(clear, -1);
+    assert.ok(cleanup.includes(`SetEventFlagID(${16009761 + i}, OFF);`));
     assert.ok(constructor.includes(
-      `$InitializeEvent(${i}, 16009960, ${16009861 + i}, ${17001800 + i}, ${16009761 + i});`));
+      `$InitializeEvent(${i}, 16009960, ${16009861 + i}, ${17001800 + i}, ${16009761 + i}, ${16009780 + i});`));
   }
 });
