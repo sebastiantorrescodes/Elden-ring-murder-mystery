@@ -10,8 +10,17 @@ const PORT = process.env.PORT || 8080;
 // its (server-generated, effectively unguessable) room code, not this secret too.
 const ROOM_SECRET = process.env.ROOM_SECRET || null;
 const MAX_ID_LENGTH = 64;
-const MIN_GAME_PLAYERS = 1;
-const MAX_GAME_PLAYERS = 6;
+const MAX_GAME_PLAYERS = 8;
+// Diagnostic override for local testing: a real round needs 3 (Murderer, Sheriff,
+// Innocent), but that floor otherwise blocks MM_SOLO_TEST_ROLE (1 player) and
+// MM_TWO_PLAYER_FAKE_MURDERER (2 players) below before their fake-player logic is
+// ever reached. Unset restores the real minimum of 3.
+const requestedMinGamePlayers = Number(process.env.MM_MIN_GAME_PLAYERS || 3);
+if (!Number.isInteger(requestedMinGamePlayers) ||
+    requestedMinGamePlayers < 1 || requestedMinGamePlayers > MAX_GAME_PLAYERS) {
+  throw new Error('MM_MIN_GAME_PLAYERS must be an integer from 1 to MAX_GAME_PLAYERS');
+}
+const MIN_GAME_PLAYERS = requestedMinGamePlayers;
 const SPAWN_COUNT = 11;
 
 // Temporary test modes. Leave MM_SOLO_TEST_ROLE unset to disable solo role
@@ -670,6 +679,15 @@ wss.on('connection', (ws) => {
       if (!room) {
         log(`[join] rejected: room "${targetRoomId}" not found`);
         ws.close(4003, 'room not found');
+        return;
+      }
+
+      // MAX_GAME_PLAYERS is the lobby's own capacity, not just the start-round gate
+      // below - checked here so a room can never grow past what a round could
+      // actually seat (matches SPAWN_COUNT/App.tsx's own "X/MAX_GAME_PLAYERS" UI).
+      if (room.size >= MAX_GAME_PLAYERS) {
+        log(`[join] rejected: room "${targetRoomId}" is full (${room.size}/${MAX_GAME_PLAYERS})`);
+        ws.close(4006, 'room full');
         return;
       }
 
