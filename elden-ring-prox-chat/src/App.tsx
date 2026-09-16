@@ -65,11 +65,10 @@ const MAPS: MapOption[] = [
 const SERVER_URL = 'wss://er-proximity-chat.duckdns.org'; // < og
 // const SERVER_URL = 'ws://localhost:8080';
 
-// Murder Mystery needs exactly one Murderer and one Sheriff plus at least two
-// Innocents to be worth playing, and stops making sense past 6 for a single room.
-// MIN temporarily dropped to 1 for solo testing - restore to 4 before real games.
-const MIN_GAME_PLAYERS = 1;
-const MAX_GAME_PLAYERS = 6;
+// Murder Mystery needs a room big enough that Murderer/Sheriff/Innocent roles
+// still feel meaningful, and small enough for one lobby to stay manageable.
+const MIN_GAME_PLAYERS = 3;
+const MAX_GAME_PLAYERS = 8;
 
 // Round length options, in minutes - the host picks one in Settings; the chosen
 // value is what handleStartGameClick multiplies out to milliseconds and sends
@@ -929,6 +928,8 @@ export default function App() {
   const allReady = myReady && peers.every((peer) => peer.ready);
   const isDisplayNameValid = displayName.trim().length >= DISPLAY_NAME_MIN_LENGTH;
   const currentMap = MAPS[selectedMapIndex];
+  // Same "me + peers" convention as handleStartGameClick's own playerCount below.
+  const playerCount = 1 + peers.length;
   // Players list order: host first, then "me", then everyone else. `peers` never
   // contains the local player (see syncPeerRows), so when I'm the host, my own row
   // (rendered separately below) already covers "host first" and there's no
@@ -1024,7 +1025,17 @@ export default function App() {
           <span className="font-display text-sm tracking-wide text-primary">{currentMap.name}</span>
         </div>
         <div className="absolute top-24 left-0 flex w-64 flex-col gap-3 pl-6">
-          <h2 className="font-display text-lg tracking-wide text-primary whitespace-nowrap">Players</h2>
+          <h2 className="font-display text-lg tracking-wide text-primary whitespace-nowrap">
+            Players{' '}
+            <span className="text-sm font-normal text-muted-foreground">
+              {playerCount}/{MAX_GAME_PLAYERS}
+            </span>
+          </h2>
+          {playerCount < MIN_GAME_PLAYERS && (
+            <p className="-mt-2 text-xs text-red-400">
+              {MIN_GAME_PLAYERS} players are needed to start game
+            </p>
+          )}
           <ul className="flex flex-col gap-3 font-mono text-sm">
             {hostPeer && (
               <PeerRowItem
