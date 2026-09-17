@@ -7,7 +7,6 @@
 #include <vector>
 #include <sstream>
 #include <iomanip>
-#include <cstdlib>
 #include <map>
 #include "MMTcpClient.h"
 
@@ -346,27 +345,6 @@ namespace MM
     bool g_lobbyStateInitialized = false;
     bool g_lastInRoundtable = false;
     ULONGLONG g_lastLobbyStateReportMs = 0;
-    bool g_keyWasDown[256]{};
-
-    // GetAsyncKeyState's low bit ("pressed since the previous query") is not
-    // reliable on modern preemptive Windows and can be consumed/set by another
-    // process. Detect a press from the physical high-bit transition instead so
-    // debug hotkeys cannot fire without their key actually going down.
-    bool WasKeyPressed(int virtualKey)
-    {
-        if (virtualKey < 0 || virtualKey >= 256)
-        {
-            return false;
-        }
-
-        const bool isDown =
-            (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
-        const bool pressed =
-            isDown && !g_keyWasDown[virtualKey];
-
-        g_keyWasDown[virtualKey] = isDown;
-        return pressed;
-    }
 
     // --------------------------------------------------------
     // Native randomizer-style auto-equip
@@ -1909,26 +1887,6 @@ namespace MM
         }
     }
 
-    bool RequestRandomSpawn(uint32_t* outSpawnFlagId = nullptr)
-    {
-        const int spawnIndex =
-            1 + (rand() % 11);
-
-        Log(
-            "[SPAWN TEST] Random spawn selected: " +
-            std::to_string(spawnIndex));
-
-        // Mirrors the case table in RequestSpawn() - flag 11109912 is index 1,
-        // ..., flag 11109922 is index 11.
-        if (outSpawnFlagId)
-        {
-            *outSpawnFlagId =
-                11109911u + static_cast<uint32_t>(spawnIndex);
-        }
-
-        return RequestSpawn(spawnIndex);
-    }
-
     /*bool RequestTalismanSpawnTest()
     {
         Log("[ITEM TEST] Requesting talisman spawn #1.");
@@ -2043,18 +2001,6 @@ namespace MM
         return 16009860u +
             static_cast<uint32_t>(
                 spawnIndex);
-    }
-
-    bool RequestRandomItemSpawn()
-    {
-        const int spawnIndex =
-            1 + (rand() % 10);
-
-        Log(
-            "[ITEM TEST] Random talisman spawn selected: " +
-            std::to_string(spawnIndex));
-
-        return RequestItemSpawn(spawnIndex);
     }
 
     constexpr int SHERIFF_DROP_POINT_COUNT = 13;
@@ -4556,8 +4502,7 @@ namespace MM
                 wasActive = false;
             }
 
-            // The server selects this index. Do not call
-            // RequestRandomSpawn() here.
+            // The server selects this index - use it as-is, not a random one.
             if (!RequestSpawn(
                 spawnIndex))
             {
@@ -6029,92 +5974,6 @@ namespace MM
                             g_activeRoundId);
                     }
                 }
-            }
-
-            if (WasKeyPressed(VK_F1))
-            {
-                const int spawnIndex =
-                    1 + (rand() % SHERIFF_DROP_POINT_COUNT);
-
-                const bool activated = RequestSheriffDrop(spawnIndex);
-                Log(
-                    "[TEST] F1 -> Sheriff drop point=" +
-                    std::to_string(spawnIndex) +
-                    (activated ? " flag activated; check in-game VFX."
-                               : " FAILED; see flag errors above."));
-            }
-
-            if (WasKeyPressed(VK_F2))
-            {
-                ExecuteCommand(MMCommand::SetInnocent);
-            }
-
-            if (WasKeyPressed(VK_F3))
-            {
-                ExecuteCommand(MMCommand::SetSheriff);
-            }
-
-            if (WasKeyPressed(VK_F4))
-            {
-                ExecuteCommand(MMCommand::SetMurderer);
-            }
-
-            // F5 uses the server's drop state so pickup can grant the role.
-            // The server accepts this only in an active solo Innocent test.
-            if (WasKeyPressed(VK_F5))
-            {
-                if (!g_roundActive || g_activeRoundId.empty() ||
-                    g_isGhost || GetCurrentRole() != Role::Innocent)
-                {
-                    Log("[TEST] F5 requires an active round as a living Innocent.");
-                }
-                else if (mmTcpClient.sendLine(
-                    "event=TestFakeSheriffDeath round=" + g_activeRoundId))
-                {
-                    Log("[TEST] F5 -> fake Sheriff death requested; awaiting server drop.");
-                }
-                else
-                {
-                    Log("[ERROR] F5 could not send fake Sheriff death request.");
-                }
-            }
-
-            // F9 = return to Roundtable
-            if (WasKeyPressed(VK_F9))
-            {
-                const uintptr_t player =
-                    GetLocalPlayerIns();
-
-                if (player)
-                {
-                    RemoveSpEffectFromChrIns(
-                        player,
-                        SPEFFECT_ROUND_START_LOCK);
-                }
-
-                if (player &&
-                    ApplySpEffectToChrIns(
-                        player,
-                        SPEFFECT_RETURN_TO_HUB_REQUEST))
-                {
-                    Log(
-                        "[ROUND] F9 -> Return to Roundtable requested.");
-                }
-                else
-                {
-                    Log(
-                        "[ERROR] Failed to request return to Roundtable.");
-                }
-            }
-
-            if (WasKeyPressed(VK_F10))
-            {
-                RequestRandomSpawn();
-            }
-
-            if (WasKeyPressed(VK_F11))
-            {
-                RequestRandomItemSpawn();
             }
 
             if (currentRole == Role::Innocent)

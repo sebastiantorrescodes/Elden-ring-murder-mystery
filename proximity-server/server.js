@@ -11,11 +11,11 @@ const PORT = process.env.PORT || 8080;
 const ROOM_SECRET = process.env.ROOM_SECRET || null;
 const MAX_ID_LENGTH = 64;
 const MAX_GAME_PLAYERS = 8;
-// Diagnostic override for local testing: a real round needs 3 (Murderer, Sheriff,
-// Innocent), but that floor otherwise blocks MM_SOLO_TEST_ROLE (1 player) and
-// MM_TWO_PLAYER_FAKE_MURDERER (2 players) below before their fake-player logic is
-// ever reached. Unset restores the real minimum of 3.
-const requestedMinGamePlayers = Number(process.env.MM_MIN_GAME_PLAYERS || 3);
+// 2 is the real minimum: role assignment below fills Murderer then Sheriff first
+// and only assigns Innocent to whoever's left, so a 2-player round is just
+// Murderer + Sheriff - no Innocent required. Override to 1 locally to also reach
+// MM_SOLO_TEST_ROLE's fake-player logic below.
+const requestedMinGamePlayers = Number(process.env.MM_MIN_GAME_PLAYERS || 2);
 if (!Number.isInteger(requestedMinGamePlayers) ||
     requestedMinGamePlayers < 1 || requestedMinGamePlayers > MAX_GAME_PLAYERS) {
   throw new Error('MM_MIN_GAME_PLAYERS must be an integer from 1 to MAX_GAME_PLAYERS');
@@ -23,9 +23,7 @@ if (!Number.isInteger(requestedMinGamePlayers) ||
 const MIN_GAME_PLAYERS = requestedMinGamePlayers;
 const SPAWN_COUNT = 11;
 
-// Temporary test modes. Leave MM_SOLO_TEST_ROLE unset to disable solo role
-// testing. The existing two-player fake-Murderer mode remains enabled by
-// default until MM_TWO_PLAYER_FAKE_MURDERER=0 is supplied.
+// Temporary test mode. Leave MM_SOLO_TEST_ROLE unset to disable solo role testing.
 const VALID_TEST_ROLES = new Set(['Murderer', 'Sheriff', 'Innocent']);
 // A one-player test defaults to Innocent. Set Sheriff/Murderer explicitly to
 // exercise those paths, or set Off to disable solo fake-role assignment.
@@ -33,9 +31,6 @@ const requestedSoloTestRole = process.env.MM_SOLO_TEST_ROLE || 'Innocent';
 const SOLO_TEST_ROLE = VALID_TEST_ROLES.has(requestedSoloTestRole)
   ? requestedSoloTestRole
   : null;
-const ENABLE_TWO_PLAYER_FAKE_MURDERER =
-  process.env.MM_TWO_PLAYER_FAKE_MURDERER !== '0';
-const TWO_PLAYER_FAKE_MURDERER_ID = '__test_fake_murderer__';
 const SOLO_FAKE_PLAYER_IDS = {
   Murderer: '__test_fake_murderer__',
   Sheriff: '__test_fake_sheriff__',
@@ -916,10 +911,6 @@ wss.on('connection', (ws) => {
         );
       });
 
-      const useFakeMurderer =
-        ENABLE_TWO_PLAYER_FAKE_MURDERER &&
-        participantIds.length === 2;
-
       const useSoloRoleTest =
         SOLO_TEST_ROLE !== null &&
         participantIds.length === 1;
@@ -945,30 +936,9 @@ wss.on('connection', (ws) => {
             .filter((role) => role !== SOLO_TEST_ROLE)
             .join(',')}`,
         );
-      } else if (useFakeMurderer) {
-        // The fake murderer exists only in server-side round state.
-        roleByPlayerId.set(
-          TWO_PLAYER_FAKE_MURDERER_ID,
-          'Murderer',
-        );
-        fakePlayerIds.push(TWO_PLAYER_FAKE_MURDERER_ID);
-
-        // Randomly choose which real player starts as Sheriff.
-        roleByPlayerId.set(
-          roleOrder[0],
-          'Sheriff',
-        );
-
-        roleByPlayerId.set(
-          roleOrder[1],
-          'Innocent',
-        );
-
-        log(
-          `[test] fake murderer enabled; ` +
-          `sheriff="${roleOrder[0]}" innocent="${roleOrder[1]}"`,
-        );
       } else {
+        // Murderer and Sheriff are filled first - Innocent is not required, so a
+        // 2-player round is simply Murderer + Sheriff with nobody left over.
         roleByPlayerId.set(
           roleOrder[0],
           'Murderer',
@@ -993,7 +963,6 @@ wss.on('connection', (ws) => {
         id: roundId,
         state: 'LOADING',
         participantIds,
-        useSoloRoleTest,
         spawnByPlayerId,
         roleByPlayerId,
         loadedPlayerIds: new Set(),
@@ -1058,8 +1027,7 @@ wss.on('connection', (ws) => {
           msg.name !== 'PlayerDied' &&
           msg.name !== 'ItemPickedUp' &&
           msg.name !== 'SheriffKitPickedUp' &&
-          msg.name !== 'SheriffHit' &&
-          msg.name !== 'TestFakeSheriffDeath') ||
+          msg.name !== 'SheriffHit') ||
         !isValidIdString(msg.roundId)
       ) {
         return;
@@ -1077,34 +1045,6 @@ wss.on('connection', (ws) => {
           `[game-event] ignored stale/invalid event ` +
           `from "${peerId}"`,
         );
-        return;
-      }
-
-      if (msg.name === 'TestFakeSheriffDeath') {
-        const fakeSheriffId = SOLO_FAKE_PLAYER_IDS.Sheriff;
-        if (
-          !round.useSoloRoleTest ||
-          round.participantIds.length !== 1 ||
-          room.size !== 1 ||
-          roomHosts.get(roomId) !== peerId ||
-          round.state !== 'ACTIVE' ||
-          round.roundEnded ||
-          round.aliveByPlayerId.get(peerId) !== true ||
-          round.roleByPlayerId.get(peerId) !== 'Innocent' ||
-          round.roleByPlayerId.get(fakeSheriffId) !== 'Sheriff' ||
-          round.aliveByPlayerId.get(fakeSheriffId) !== true ||
-          round.sheriffDropIndex !== null
-        ) {
-          log(`[test] rejected fake Sheriff death from "${peerId}" round="${round.id}"`);
-          return;
-        }
-
-        // Use the normal drop and victory checks. The fake player has no DLL
-        // to respawn; only its authoritative life state needs updating.
-        round.aliveByPlayerId.set(fakeSheriffId, false);
-        updateSurvivorRespawns(room, round);
-        spawnSheriffDrop(room, round, 'F5 solo test: fake Sheriff died');
-        evaluateRoundState(roomId);
         return;
       }
 

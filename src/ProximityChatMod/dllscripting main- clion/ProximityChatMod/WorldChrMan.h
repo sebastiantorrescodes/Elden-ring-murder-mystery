@@ -80,27 +80,22 @@ public:
     static WorldChrMan Make();
     bool isLoaded();
     static int getPlayerCount();
-    static void debugPlayerCount();
-    static void debugSlot(int playerSlot);
     // Guarded raw pointer walk (SEH, not PointerChain) so an out-of-bounds/empty
-    // slot returns false instead of crashing. Shared by debugSlot and the TCP poll loop.
+    // slot returns false instead of crashing.
     static bool tryReadSlot(int playerSlot, PlayerCoords& out);
 
     // See the MapRelativeCoords comment above - per-slot like PlayerCoords (works for
     // any probed slot, not just the local player), just a different offset off the
-    // same base pointer. Same SEH-guarded-slot-walk reasoning as tryReadSlot/debugSlot.
+    // same base pointer. Same SEH-guarded-slot-walk reasoning as tryReadSlot.
     static bool tryReadMapRelative(int playerSlot, MapRelativeCoords& out);
-    static void debugMapRelative(int playerSlot);
 
     // Local client's own current map/area (see Location comment above), resolved via
     // CsMenuManImp - a separate global pointer chain from WorldChrMan/GameMan.
     static bool tryReadLocation(Location& out);
-    static void debugLocation();
 
     // Local client's own current camera facing (see Camera comment above), resolved
     // via FieldArea - another separate global pointer chain.
     static bool tryReadCamera(Camera& out);
-    static void debugCamera();
 
     // This client's own current "block" id - a much more granular area identifier
     // than Location.mapId (which only ever distinguishes base game vs DLC). Ported
@@ -111,6 +106,5 @@ public:
     // read (no further chain). Unlike Location/Camera, this hasn't been sanity-
     // checked against live data yet - treat the plausible range as unconfirmed.
     static bool tryReadBlockId(uint32_t& out);
-    static void debugBlockId();
 };
 #endif // _WORLD_CHR_MAN_H_

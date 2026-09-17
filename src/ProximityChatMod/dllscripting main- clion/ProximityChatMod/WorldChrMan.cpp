@@ -3,7 +3,6 @@
 #include "GameVersion.h"
 #include "PointerChain.h"
 #include "pch.h"
-#include <iostream>
 #include <cmath>
 
 
@@ -89,17 +88,6 @@ int WorldChrMan::getPlayerCount(){
     return playerCount;
 }
 
-void WorldChrMan::debugPlayerCount() {
-    std::cout << "GameManIns addr: " << std::hex << GameManIns << std::dec << std::endl;
-    if (GameManIns && *GameManIns) {
-        int val14 = PointerChain::make<int>(GameManIns, 0xD60, 0x14);
-        int val1C = PointerChain::make<int>(GameManIns, 0xD60, 0x1C);
-        std::cout << "offset 0x14 value: " << val14 << ", offset 0x1C value: " << val1C << std::endl;
-    } else {
-        std::cout << "GameManIns not resolved" << std::endl;
-    }
-}
-
 // Uses raw pointer walks (not PointerChain) wrapped in SEH so a bad/out-of-bounds
 // slot returns false instead of crashing the whole game.
 bool WorldChrMan::tryReadSlot(int playerSlot, PlayerCoords& out) {
@@ -135,20 +123,6 @@ bool WorldChrMan::tryReadSlot(int playerSlot, PlayerCoords& out) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
-}
-
-void WorldChrMan::debugSlot(int playerSlot) {
-    if (!WorldChrManIns) {
-        std::cout << "Slot " << playerSlot << ": WorldChrManIns is null" << std::endl;
-        return;
-    }
-    PlayerCoords coords{};
-    if (!tryReadSlot(playerSlot, coords)) {
-        std::cout << "Slot " << playerSlot << ": empty or read crashed, likely out of bounds" << std::endl;
-        return;
-    }
-    std::cout << "Slot " << playerSlot << " coords: x=" << coords.x << " y=" << coords.y << " z=" << coords.z
-               << " hp=" << coords.hp << "/" << coords.maxHp << std::endl;
 }
 
 // See the MapRelativeCoords comment in WorldChrMan.h - same per-slot base pointer as
@@ -189,27 +163,6 @@ bool WorldChrMan::tryReadMapRelative(int playerSlot, MapRelativeCoords& out) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
-}
-
-void WorldChrMan::debugMapRelative(int playerSlot) {
-    MapRelativeCoords mrc{};
-    if (!tryReadMapRelative(playerSlot, mrc)) {
-        std::cout << "Slot " << playerSlot << " mapRelative: empty or read crashed, likely out of bounds" << std::endl;
-        return;
-    }
-    // Packed as area/gridX/gridZ/variant, matching this repo's own m<area>_<gridX>_
-    // <gridZ>_<variant> map file naming (e.g. m60_42_36_00 -> area 0x3C, gridX 0x42,
-    // gridZ 0x24... printed in hex here since that's the base the file names use).
-    uint8_t areaId = (mrc.map >> 24) & 0xFF;
-    uint8_t gridXNo = (mrc.map >> 16) & 0xFF;
-    uint8_t gridZNo = (mrc.map >> 8) & 0xFF;
-    uint8_t variant = mrc.map & 0xFF;
-    // x/z below are already rebased onto the open-world grid origin when areaId is
-    // 0x3C/0x3D (tryReadMapRelative does this internally) - shown as read otherwise.
-    std::cout << "Slot " << playerSlot << " mapRelative: x=" << mrc.x << " y=" << mrc.y << " z=" << mrc.z
-               << " rad=" << mrc.rad << " map=0x" << std::hex << mrc.map
-               << " (areaId=0x" << (int)areaId << " gridXNo=0x" << (int)gridXNo
-               << " gridZNo=0x" << (int)gridZNo << " variant=0x" << (int)variant << ")" << std::dec << std::endl;
 }
 
 // Used to gate on underground being in [0, 8] here too (EROverlay only ever checks
@@ -269,52 +222,6 @@ bool WorldChrMan::tryReadLocation(Location& out) {
     }
 }
 
-// Mirrors tryReadLocation's walk but reports which stage failed instead of
-// collapsing every failure into one opaque message. Kept separate from
-// tryReadLocation (rather than adding a verbose flag there) since that
-// function also runs unlogged on the 250ms TCP poll loop in dllmain.cpp.
-void WorldChrMan::debugLocation() {
-    std::cout << "Location: CsMenuManImpIns=" << std::hex << (void*)CsMenuManImpIns
-               << " LocationOffset=0x" << LocationOffset << std::dec << std::endl;
-    __try {
-        if (!CsMenuManImpIns) {
-            std::cout << "Location: unavailable - CsMenuManImpIns is null (signature scan never matched at init)" << std::endl;
-            return;
-        }
-        uintptr_t addr = *(uintptr_t*)CsMenuManImpIns;
-        std::cout << "Location: [CsMenuManImpIns] = " << std::hex << addr << std::dec << std::endl;
-        if (!addr) {
-            std::cout << "Location: unavailable - CsMenuManImpIns points to a null instance" << std::endl;
-            return;
-        }
-        addr = *(uintptr_t*)(addr + 0x80);
-        std::cout << "Location: [+0x80] = " << std::hex << addr << std::dec << std::endl;
-        if (!addr) {
-            std::cout << "Location: unavailable - +0x80 hop is null" << std::endl;
-            return;
-        }
-        addr = *(uintptr_t*)(addr + LocationOffset);
-        std::cout << "Location: [+LocationOffset] = " << std::hex << addr << std::dec << std::endl;
-        if (!addr) {
-            std::cout << "Location: unavailable - +LocationOffset hop is null" << std::endl;
-            return;
-        }
-        Location loc = *(Location*)(addr + 0x24);
-        std::cout << "Location: raw mapId=" << loc.mapId << " underground=" << loc.underground
-                   << " mapX=" << loc.x << " mapY=" << loc.y << " oriDeg=" << loc.oriDeg << std::endl;
-        if (!saneLocation(loc)) {
-            std::cout << "Location: unavailable - mapX=" << loc.x << " mapY=" << loc.y
-                       << " failed sanity check (non-finite or |value| > " << kMapCoordSanityBound
-                       << ") - likely a LocationOffset mismatch for this game version" << std::endl;
-            return;
-        }
-        std::cout << "Location: mapId=" << loc.mapId << " underground=" << loc.underground
-                   << " mapX=" << loc.x << " mapY=" << loc.y << " oriDeg=" << loc.oriDeg << std::endl;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        std::cout << "Location: unavailable - read faulted (access violation mid-chain)" << std::endl;
-    }
-}
-
 // Local client's own current camera facing via FieldArea - see the Camera comment
 // in WorldChrMan.h for why this is not per-player-slot data, and why the exact
 // axis/sign mapping of yawCos/yawSin is unverified until checked in-game.
@@ -342,15 +249,6 @@ bool WorldChrMan::tryReadCamera(Camera& out) {
     }
 }
 
-void WorldChrMan::debugCamera() {
-    Camera cam{};
-    if (!tryReadCamera(cam)) {
-        std::cout << "Camera: unavailable (FieldArea not resolved or chain broken)" << std::endl;
-        return;
-    }
-    std::cout << "Camera: yawCos=" << cam.yawCos << " yawSin=" << cam.yawSin << std::endl;
-}
-
 // Local client's own current "block" id, ported from EROverlay's boss-tracking
 // module - see the comment in WorldChrMan.h for why this is a much more granular
 // area identifier than Location.mapId. Simpler chain than Location/Camera: one
@@ -369,13 +267,4 @@ bool WorldChrMan::tryReadBlockId(uint32_t& out) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
-}
-
-void WorldChrMan::debugBlockId() {
-    uint32_t blockId = 0;
-    if (!tryReadBlockId(blockId)) {
-        std::cout << "BlockId: unavailable (FieldArea not resolved or chain broken)" << std::endl;
-        return;
-    }
-    std::cout << "BlockId: " << blockId << std::endl;
 }
