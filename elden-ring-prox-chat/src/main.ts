@@ -39,12 +39,10 @@ function sendMmConnectionState(connected: boolean) {
   mainWindow?.webContents.send('mm-connection-state', connected);
 }
 
-// Packaged builds have no attached console, so plain console.log here is invisible
-// to anyone not running from a dev terminal - mirror it into the renderer's visible
-// UI too, since that's the only thing a non-technical user (or a remote friend,
-// diagnosed only via screenshots) can actually see.
+// Packaged builds have no attached console, so this is surfaced through the
+// renderer's visible UI instead - the only thing a non-technical user (or a
+// remote friend, diagnosed only via screenshots) can actually see.
 function logStatus(message: string) {
-  console.log(message);
   mainWindow?.webContents.send('dll-status', message);
 }
 

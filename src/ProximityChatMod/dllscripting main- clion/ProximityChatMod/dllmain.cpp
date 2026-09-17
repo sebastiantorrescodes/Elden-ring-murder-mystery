@@ -3,24 +3,8 @@
 #include "pch.h"
 #include "Signature.h"
 #include "WorldChrMan.h"
-#include <iostream>
 #include "TcpTestClient.h"
 #include <sstream>
-#include <cstdio>
-
-// eldenring.exe is a GUI-subsystem process with no console of its own, so std::cout
-// from this DLL has nowhere to go until a console is created and stdout/stderr are
-// redirected into it. Ported from the old Visual Studio build's Logger.h, which did
-// the same AllocConsole+freopen dance (there, gated to debug builds only - kept
-// unconditional here since this whole DLL is a debug/dev tool).
-static void AttachDebugConsole()
-{
-    AllocConsole();
-    FILE* filePtr;
-    freopen_s(&filePtr, "CONOUT$", "w", stdout);
-    freopen_s(&filePtr, "CONOUT$", "w", stderr);
-    SetConsoleTitleA("ProximityChatMod Debug Console");
-}
 
 // How many player slots to probe each poll cycle when broadcasting to the TCP test listener.
 // Currently unused by the poll loop below (only the local slot is sent - see the
@@ -36,69 +20,13 @@ DWORD WINAPI MainThread(LPVOID lpParam)
     // Discarded return value - Make() is what runs the signature scan populating
     // WorldChrManIns/GameManIns/CsMenuManImpIns/FieldAreaIns, which every tryRead*
     // call below depends on. Needs to happen once up front so the TCP poll loop
-    // works immediately, without waiting on a NUMPAD3 press.
+    // works immediately.
     WorldChrMan::Make();
 
     TcpTestClient tcpTestClient("127.0.0.1", 9191);
     unsigned long long nextTcpPollMs = 0;
 
 	while (true) {
-        // Prints a single clean snapshot of the local player's own current stats -
-        // deliberately local-player-only (no other slot probing): each participant
-        // runs their own DLL+app instance and self-reports just their own state (see
-        // the kLocalPlayerSlot comment above and the TCP poll loop below), so another
-        // slot's raw data was never actually meaningful for this client to display.
-        if (GetAsyncKeyState(VK_NUMPAD3) & 1) {
-            if (!WorldChrMan::Make().isLoaded()) {
-                std::cout << "Local player: WorldChrMan not loaded" << std::endl;
-            } else {
-                std::cout << "=== Local player ===" << std::endl;
-
-                PlayerCoords coords{};
-                if (WorldChrMan::tryReadSlot(kLocalPlayerSlot, coords)) {
-                    std::cout << "Position: x=" << coords.x << " y=" << coords.y << " z=" << coords.z
-                               << " hp=" << coords.hp << "/" << coords.maxHp << std::endl;
-                } else {
-                    std::cout << "Position: unavailable" << std::endl;
-                }
-
-                Location loc{};
-                if (WorldChrMan::tryReadLocation(loc)) {
-                    std::cout << "Map: mapX=" << loc.x << " mapY=" << loc.y << " oriDeg=" << loc.oriDeg
-                               << " (mapId=" << loc.mapId << " underground=" << loc.underground << ")" << std::endl;
-                } else {
-                    std::cout << "Map: unavailable" << std::endl;
-                }
-
-                Camera cam{};
-                if (WorldChrMan::tryReadCamera(cam)) {
-                    std::cout << "Camera: yawCos=" << cam.yawCos << " yawSin=" << cam.yawSin << std::endl;
-                } else {
-                    std::cout << "Camera: unavailable" << std::endl;
-                }
-
-                MapRelativeCoords mapRel{};
-                if (WorldChrMan::tryReadMapRelative(kLocalPlayerSlot, mapRel)) {
-                    uint8_t areaId = (mapRel.map >> 24) & 0xFF;
-                    uint8_t gridXNo = (mapRel.map >> 16) & 0xFF;
-                    uint8_t gridZNo = (mapRel.map >> 8) & 0xFF;
-                    std::cout << "MapRelative: x=" << mapRel.x << " y=" << mapRel.y << " z=" << mapRel.z
-                               << " rad=" << mapRel.rad << " (areaId=0x" << std::hex << (int)areaId
-                               << " gridX=0x" << (int)gridXNo << " gridZ=0x" << (int)gridZNo << std::dec << ")"
-                               << std::endl;
-                } else {
-                    std::cout << "MapRelative: unavailable" << std::endl;
-                }
-
-                uint32_t blockId = 0;
-                if (WorldChrMan::tryReadBlockId(blockId)) {
-                    std::cout << "BlockId: " << blockId << std::endl;
-                } else {
-                    std::cout << "BlockId: unavailable" << std::endl;
-                }
-            }
-        }
-
         unsigned long long nowMs = GetTickCount64();
         if (nowMs >= nextTcpPollMs) {
             nextTcpPollMs = nowMs + kTcpPollIntervalMs;
@@ -186,7 +114,6 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID)
 	if (reason == DLL_PROCESS_ATTACH)
 	{
 		DisableThreadLibraryCalls(module);
-		AttachDebugConsole();
 		CreateThread(0, 0, &MainThread, 0, 0, NULL);
 	}
 	return 1;

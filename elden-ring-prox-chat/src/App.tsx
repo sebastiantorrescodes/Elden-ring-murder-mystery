@@ -65,9 +65,10 @@ const MAPS: MapOption[] = [
 const SERVER_URL = 'wss://er-proximity-chat.duckdns.org'; // < og
 // const SERVER_URL = 'ws://localhost:8080';
 
-// Murder Mystery needs a room big enough that Murderer/Sheriff/Innocent roles
-// still feel meaningful, and small enough for one lobby to stay manageable.
-const MIN_GAME_PLAYERS = 3;
+// 2 is the real minimum: server.js fills Murderer then Sheriff first and only
+// assigns Innocent to whoever's left, so a 2-player round is just Murderer +
+// Sheriff - no Innocent required. Upper bound keeps one lobby manageable.
+const MIN_GAME_PLAYERS = 2;
 const MAX_GAME_PLAYERS = 8;
 
 // Round length options, in minutes - the host picks one in Settings; the chosen
@@ -731,8 +732,7 @@ export default function App() {
     setStatus('waiting for all players to load...');
   };
 
-  // Sends everyone (including the host) back to the Roundtable - same
-  // FLAG_RETURN_TO_HUB_REQUEST the DLL's F9 test hotkey sets - then flips the
+  // Sends everyone (including the host) back to the Roundtable - then flips the
   // button back so the host can start another round. Also used by the
   // round-timer effect below to auto-end when the countdown hits zero, so
   // clearing the timer here (rather than only on a manual click) covers both.
@@ -811,8 +811,7 @@ export default function App() {
             eventName === 'PlayerDied' ||
             eventName === 'ItemPickedUp' ||
             eventName === 'SheriffKitPickedUp' ||
-            eventName === 'SheriffHit' ||
-            eventName === 'TestFakeSheriffDeath') &&
+            eventName === 'SheriffHit') &&
           roundId &&
           signalingRef.current
         ) {
