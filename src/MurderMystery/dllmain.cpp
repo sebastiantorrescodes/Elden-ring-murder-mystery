@@ -378,21 +378,21 @@ namespace MM
 
     void Log(const std::string& text)
     {
-        char dllPath[MAX_PATH]{};
-        GetModuleFileNameA(g_module, dllPath, MAX_PATH);
+        // char dllPath[MAX_PATH]{};
+        // GetModuleFileNameA(g_module, dllPath, MAX_PATH);
 
-        std::string path = dllPath;
+        // std::string path = dllPath;
 
-        const auto slash = path.find_last_of("\\/");
-        if (slash != std::string::npos)
-            path.resize(slash + 1);
+        // const auto slash = path.find_last_of("\\/");
+        // if (slash != std::string::npos)
+        //     path.resize(slash + 1);
 
-        path += "MurderMystery.log";
+        // path += "MurderMystery.log";
 
-        std::ofstream file(path, std::ios::app);
+        // std::ofstream file(path, std::ios::app);
 
-        if (file)
-            file << text << "\n";
+        // if (file)
+        //     file << text << "\n";
     }
 
     std::string Hex(uintptr_t value)
