@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -510,6 +511,64 @@ namespace MM
 
         size = nt->OptionalHeader.SizeOfImage;
 
+        return true;
+    }
+
+    // --------------------------------------------------------
+    // Disable rune loss by skipping only the LoseRunes call.
+    // --------------------------------------------------------
+
+    bool PatchRuneLoss()
+    {
+        uintptr_t base = 0;
+        size_t size = 0;
+
+        if (!GetModuleInfo(base, size))
+        {
+            Log("[ERROR] Could not resolve eldenring.exe for rune-loss patch.");
+            return false;
+        }
+
+        constexpr const char* PATTERN =
+            "48 8B D3 "
+            "E8 ?? ?? ?? ?? "
+            "48 8B 5C 24 20 "
+            "32 C0 "
+            "48 83 C4 28 "
+            "C3";
+
+        const uintptr_t match = FindPattern(base, size, PATTERN);
+
+        if (!match)
+        {
+            Log("[ERROR] Rune-loss AOB not found.");
+            return false;
+        }
+
+        // Preserve mov rdx,rbx and the epilogue; NOP only E8 rel32.
+        uint8_t* call = reinterpret_cast<uint8_t*>(match + 3);
+        DWORD oldProtect = 0;
+
+        if (!VirtualProtect(call, 5, PAGE_EXECUTE_READWRITE, &oldProtect))
+        {
+            Log("[ERROR] Rune-loss patch VirtualProtect failed.");
+            return false;
+        }
+
+        std::memset(call, 0x90, 5);
+
+        DWORD unused = 0;
+        const BOOL restored = VirtualProtect(call, 5, oldProtect, &unused);
+        const BOOL flushed = FlushInstructionCache(GetCurrentProcess(), call, 5);
+
+        if (!restored)
+            Log("[ERROR] Rune-loss patch could not restore memory protection.");
+        if (!flushed)
+            Log("[ERROR] Rune-loss patch could not flush instruction cache.");
+        if (!restored || !flushed)
+            return false;
+
+        Log("[OK] Rune loss disabled.");
         return true;
     }
 
@@ -5239,6 +5298,8 @@ namespace MM
 
         // Give Elden Ring time to finish initial setup.
         Sleep(3000);
+
+        PatchRuneLoss();
 
         bool lastAliveState = true;
         bool aliveStateInitialized = false;
